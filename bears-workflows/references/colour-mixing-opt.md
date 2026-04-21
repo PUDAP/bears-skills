@@ -182,23 +182,24 @@ Pass all `(volume_ratios, RMSE)` pairs (one per active well) to the chosen optim
 The optimizer returns the next `(R_vol, G_vol, B_vol)` to try.
 
 **Step 10 — Iteration report**
-For each new set of optimization, create a new report file named `logs/colour-mixing-report-<sample name that user input>.md`. Do not count the 3 `x_init` mixes as iterations. First, append one `x_init` log block to that report file after the initial protocol finishes, then start iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
+For each new set of optimization, create a new report file named `logs/colour-mixing-report-<sample name that user input>.md`. Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
 
-The `x_init` log block must record:
-- RMSE for all 3 initial mixes
-- The 3 initial volume ratios and measured RGB values
+Each `x_init` log block must record:
+- Which seed run it is: `x_init 1`, `x_init 2`, or `x_init 3`
+- RMSE for that initial mix only
+- The volume ratio and measured RGB value for that initial mix only
 
 Example `x_init` log block:
 
 ```markdown
-## x_init
+## x_init 1
 
 | Field | Value |
 |---|---|
 | Image saved | colour-RGB-<Sample name that user input>-<N>.jpg |
 | Target colour RGB | (<R_target>, <G_target>, <B_target>) |
 
-### Wells processed in x_init
+### Wells processed in x_init 1
 
 | Well | Volume ratio (R, G, B µL) | Mixed colour RGB | RMSE |
 |---|---|---|---|
@@ -223,7 +224,7 @@ Example `x_init` log block:
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
 
-The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. However, their RMSE values and well data must still be recorded in the `x_init` log block. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
+The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first BO/LLM-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
 
 **Step 11 — Generate and execute protocol**
 Use **puda-protocol** to generate a new protocol with the suggested volumes and execute it on the Opentrons.
