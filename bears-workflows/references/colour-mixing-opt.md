@@ -116,6 +116,8 @@ Tip usage must advance in row-major order on the tip rack:
 ```text
 A1, A2, A3, ... A12, B1, B2, ... H12
 ```
+Use tips strictly in that exact order across `x_init` and all later iterations. For example, if `x_init` uses 3 tips, they must be `A1`, `A2`, `A3`; the next iteration must continue with `A4`, then `A5`, then `A6`, and so on. Do not use column-wise ordering such as `A1`, `B1`, `C1`.
+
 **Execution Sequence (MUST FOLLOW EXACTLY)**
 1. Upload protocol
 2. Create run -> store `run_id`
@@ -182,7 +184,7 @@ Pass all `(volume_ratios, RMSE)` pairs (one per active well) to the chosen optim
 The optimizer returns the next `(R_vol, G_vol, B_vol)` to try.
 
 **Step 10 — Iteration report**
-For each new set of optimization, create a new report file named `logs/colour-mixing-report-<sample name that user input>.md`. Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
+For each new set of optimization, create a new report file named `reports/colour-mixing-report-<sample name that user input>.md`. Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
 
 Each `x_init` log block must record:
 - Which seed run it is: `x_init 1`, `x_init 2`, or `x_init 3`
@@ -240,7 +242,7 @@ Stop when **either** is met:
 | `RMSE ≤ threshold` | Target colour matched within acceptable error |
 | `iteration ≥ max_iter` | Maximum optimization iterations reached (not counting the 3 `x_init` mixes) |
 
-On stop: generate a final summary report and save it to `logs/colour-mixing-report-<sample name that user input>.md`.
+On stop: generate a final summary report and save it to `reports/colour-mixing-report-<sample name that user input>.md`.
 
 ## Rules
 
@@ -252,6 +254,7 @@ On stop: generate a final summary report and save it to `logs/colour-mixing-repo
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
+- Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`; never use `A1, B1, C1, ...` ordering.
 - Protocol must always end with no tip attached (Opentrons sequencing rule).
 - Invoke **puda-memory** after every protocol creation and run.
 - **If unsure about any input, parameter, or decision — ask the user. Do not assume.**
