@@ -45,7 +45,7 @@ Use `camera_capture` to take a still image with the external camera mounted abov
   "machine_id": "opentrons",
   "name": "camera_capture",
   "params": {
-    "filename": "Base-colour-RGB-exp-1.jpg"
+    "filename": "colour-RGB-blue_sample-1.jpg"
   }
 }
 ```
@@ -60,7 +60,9 @@ Use `camera_capture` to take a still image with the external camera mounted abov
 
 - Capture **one image per iteration** — after all dispense steps for that iteration are complete, not during or between individual dispenses.
 - The pipette arm must not be obstructing the wellplate view when `camera_capture` is called. Ensure the robot has moved to a clear position (e.g. home or a safe park position) before capturing.
-- Image names must follow the convention agreed in the workflow (e.g. `Base-colour-RGB-exp-<N>.jpg` for colour mixing experiments).
+- Image names must follow the convention agreed in the workflow. For colour mixing experiments, use `colour-RGB-<Sample name>-<N>.jpg`.
+- Do not omit the `-<N>` suffix. `colour-RGB-<Sample name>.jpg` is invalid because later runs would overwrite earlier images.
+- `<N>` must be a concrete run number in the generated command, for example `1`, `2`, `3`, ...
 - `camera_capture` does **not** require a tip to be attached or detached — it is independent of the pipette state.
 - `camera_capture` can appear at any point after `home` and all `load_labware` / `load_instrument` commands.
 

@@ -46,7 +46,9 @@ This applies to every iteration.
 
 Mandatory Rules
 -Always create a new run per protocol
+-Always create a new protocol for every new run
 -Never reuse run_id
+-Never modify or overwrite an existing protocol from an earlier run
 -Never send play twice on same run
 -Never start a run if another run is active
 -Always poll until run reaches terminal state: successded, failed or stopped 
@@ -109,7 +111,7 @@ The confirmation summary must include:
 Do not generate the initial protocol until the user confirms that the full setup is correct.
 
 **Step 2 — Initial mixes (`x_init`)**
-Generate a single protocol that dispenses all 3 initial volume combinations into 3 separate wells (e.g. A1, A2, A3) and execute it on the Opentrons. Record which well received which `(R_vol, G_vol, B_vol)` set.
+Generate a single protocol that dispenses all 3 initial volume combinations into 3 separate wells (e.g. A1, A2, A3) and execute it on the Opentrons. Record which well received which `(R_vol, G_vol, B_vol)` set. The protocol filename must include the exact sample name provided by the user.
 
 Tip usage must advance in row-major order on the tip rack:
 
@@ -227,7 +229,7 @@ Example `x_init` log block:
 The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first BO/LLM-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
 
 **Step 11 — Generate and execute protocol**
-Use **puda-protocol** to generate a new protocol with the suggested volumes and execute it on the Opentrons.
+Use **puda-protocol** to generate a brand-new protocol with the suggested volumes for this run and execute it on the Opentrons. The protocol filename must include the exact sample name provided by the user so each protocol file is clearly tied to that sample. Do not modify, reuse, or overwrite a protocol created for an earlier run.
 
 ---
 
@@ -252,6 +254,8 @@ On stop: generate a final summary report and save it to `logs/colour-mixing-repo
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
+- Every new run must create a new protocol; never edit or overwrite an existing protocol from a prior run.
+- Protocol filenames must include the exact sample name provided by the user.
 - Protocol must always end with no tip attached (Opentrons sequencing rule).
 - Invoke **puda-memory** after every protocol creation and run.
 - **If unsure about any input, parameter, or decision — ask the user. Do not assume.**
