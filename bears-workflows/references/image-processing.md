@@ -56,13 +56,13 @@ row H   H1      H2         H12     ← bottom-left to bottom-right
 
 ```python
 DEFAULT_CONFIG = ImageConfig(
-    src_corners=[(293, 271), (394, 271), (394, 338), (293, 338)],
-    dst_corners=[(0, 0), (600, 0), (600, 400), (0, 400)],
-    plate_width=600,
-    plate_height=400,
+    src_corners=[(295, 271), (395, 272), (395, 338), (295, 338)]
+    dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
+    plate_width=1800,
+    plate_height=1200,
     col_num=12,    # columns 1–12, left → right
     row_num=8,     # rows A–H, top → bottom
-    offset_array=[[18, 18], [18, 18]],
+    offset_array=[[54, 54], [54, 54]],
 )
 ```
 
@@ -84,7 +84,7 @@ Solves the 8×8 linear system (via `np.linalg.solve`) that maps the four raw pla
 raw image  →  PIL Image.PERSPECTIVE(coeffs)  →  flat plate image
 ```
 
-PIL applies the coefficients with bicubic interpolation (`Image.BICUBIC`). Result: a clean, upright, undistorted view of the wellplate exactly `plate_width × plate_height` pixels.
+PIL applies the coefficients with bicubic interpolation (`Image.BICUBIC`). Result: a clean, upright, undistorted view of the wellplate exactly `plate_width × plate_height` pixels. The default configuration now warps to a higher-resolution `1800 × 1200` output so the corrected plate image and ROI patches are much clearer.
 
 Saved as `<name>_warped.jpg`.
 
@@ -94,7 +94,7 @@ Saved as `<name>_warped.jpg`.
 
 ```python
 cell_w, cell_h = get_grid_dimensions(plate_np, col_num=12, row_num=8)
-# e.g. cell_w = 600/12 = 50.0 px,  cell_h = 400/8 = 50.0 px
+# e.g. cell_w = 1800/12 = 150.0 px,  cell_h = 1200/8 = 150.0 px
 ```
 
 Divides the warped plate image dimensions by the grid counts to get the floating-point size of each well cell. Used by both `slice_roi_patches` and `crop_well`.
@@ -182,7 +182,7 @@ src_corners = [
 ]
 ```
 
-`plate_width` and `plate_height` set the output resolution — increase them for higher-resolution ROI patches.
+`plate_width` and `plate_height` set the output resolution. The default pipeline uses `1800 × 1200` so the warped image is clearer after perspective correction.
 
 The warped image is used directly for ROI extraction. If alignment changes, recalibrate `src_corners`, `plate_width`, `plate_height`, or `offset_array`.
 
@@ -212,5 +212,6 @@ Invalid well IDs are rejected before extraction. Examples:
 - Recalibrate `src_corners` whenever the camera is physically moved or refocused.
 - Capture **one image per iteration** after all dispenses are complete and the pipette arm is clear.
 - `run_pipeline()` always saves the warped image and the ROI debug image every call.
+- Warped and ROI debug JPEG outputs are saved with higher-quality settings to reduce visible compression blur.
 - Custom save paths can point to new directories; parent folders are created automatically.
 - Inspect `<name>_roi_debug.jpg` first when RGB results look wrong.

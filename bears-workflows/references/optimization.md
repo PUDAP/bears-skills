@@ -62,11 +62,16 @@ Ask the user which model to use before initializing. Do not assume a default.
 |---|---|
 | `gpt-4o` | `openai/gpt-4o` |
 | `gpt-4.1` | `openai/gpt-4.1` |
+| `gpt-5.1` | `openai/gpt-5.1` |
 | `claude-sonnet-4-5` | `anthropic/claude-sonnet-4-5` |
 | `claude-opus-4` | `anthropic/claude-opus-4` |
 | `gemini-2.5-pro` | `google/gemini-2.5-pro-preview` |
 | `llama-4-maverick` | `meta-llama/llama-4-maverick` |
 | `deepseek-r2` | `deepseek/deepseek-r2` |
+| `deepseek-v3.2` | `deepseek/deepseek-v3.2` |
+| `qwen3-max` | `qwen/qwen3-max` |
+| `glm-4.6` | `z-ai/glm-4.6` |
+| `kimi-k2-0905` | `moonshotai/kimi-k2-0905` |
 
 **Usage**:
 ```python

@@ -77,13 +77,13 @@ class ImageConfig:
 # Adjust src_corners if the camera is repositioned.
 # Adjust plate_width/plate_height to control warp output resolution.
 DEFAULT_CONFIG = ImageConfig(
-    src_corners=[(293, 271), (394, 271), (394, 338), (293, 338)],
-    dst_corners=[(0, 0), (600, 0), (600, 400), (0, 400)],
-    plate_width=600,
-    plate_height=400,
+    src_corners=[(295, 271), (395, 272), (395, 338), (295, 338)],
+    dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
+    plate_width=1800,
+    plate_height=1200,
     col_num=12,    # columns 1–12, left → right
     row_num=8,     # rows A–H, top → bottom
-    offset_array=[[18, 18], [18, 18]],
+    offset_array=[[54, 54], [54, 54]],
 )
 
 
@@ -367,8 +367,23 @@ def save_roi_debug_image(
         draw.text((x1 + 1, y1 + 1), label, fill=outline_colour, font=font)
 
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
-    debug_pil.save(save_path)
+    save_pil_image(debug_pil, save_path)
     return save_path
+
+
+def save_pil_image(image: Image.Image, save_path: str) -> None:
+    """
+    Save an image with higher-quality settings for JPEG outputs.
+
+    Perspective-corrected plate images and ROI debug images are often inspected
+    visually, so avoid low-quality default JPEG settings that can make the
+    warped image appear soft or blocky.
+    """
+    suffix = os.path.splitext(save_path)[1].lower()
+    if suffix in {".jpg", ".jpeg"}:
+        image.save(save_path, quality=95, subsampling=0, optimize=True)
+    else:
+        image.save(save_path)
 
 
 # ---------------------------------------------------------------------------
@@ -529,7 +544,7 @@ def run_pipeline(
     if warped_save_path is None:
         warped_save_path = f"{base}_warped{ext}"
     ensure_parent_dir(warped_save_path)
-    warped_pil.save(warped_save_path)
+    save_pil_image(warped_pil, warped_save_path)
 
     # Step 3 & 4: Grid dimensions + ROI slice on the warped image
     plate_np = warped_np
