@@ -79,6 +79,84 @@ OPENROUTER_MODELS: dict[str, str] = {
 }
 
 
+def _response_content_to_text(content: Any) -> str:
+    """Normalize OpenAI/OpenRouter response content into plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+        return "".join(parts)
+    return str(content)
+
+
+def _extract_first_json_object_text(response: str) -> str:
+    """
+    Extract the first valid JSON object from a model response.
+
+    This is more robust than a greedy regex because models often prepend or
+    append explanations, markdown fences, or multiple brace blocks.
+    """
+    text = response.strip()
+    if not text:
+        raise ValueError("Model returned an empty response.")
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    else:
+        if isinstance(data, dict):
+            return text
+
+    for start in (idx for idx, ch in enumerate(text) if ch == "{"):
+        depth = 0
+        in_string = False
+        escape = False
+
+        for end in range(start, len(text)):
+            ch = text[end]
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:end + 1]
+                    try:
+                        data = json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break
+                    if isinstance(data, dict):
+                        return candidate
+                    break
+
+    snippet = text[:200].replace("\n", "\\n")
+    raise ValueError(f"Could not extract a valid JSON object from model response: {snippet}")
+
+
 # ---------------------------------------------------------------------------
 # Bayesian Optimization — base
 # ---------------------------------------------------------------------------
@@ -462,20 +540,7 @@ class SOCM_LLM:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
         )
-        content = response.choices[0].message.content
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(str(item.get("text", "")))
-            return "".join(parts)
-        return str(content)
+        return _response_content_to_text(response.choices[0].message.content)
 
     def _parse_and_validate(self, response: str) -> list[float]:
         """
@@ -492,18 +557,10 @@ class SOCM_LLM:
             KeyError: If required keys are missing.
             ValueError: If volumes do not sum to total_volume (±1 µL tolerance).
         """
-        cleaned = response.strip()
-        if not cleaned:
-            raise ValueError("Model returned an empty response.")
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-            cleaned = cleaned.strip()
-        if not cleaned.startswith("{"):
-            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-            if match:
-                cleaned = match.group(0)
+        cleaned = _extract_first_json_object_text(response)
         data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object with R_vol, G_vol, and B_vol.")
         r, g, b = float(data["R_vol"]), float(data["G_vol"]), float(data["B_vol"])
 
         if abs(r + g + b - self.total_volume) > 1.0:
@@ -1068,17 +1125,10 @@ class ViscosityLLMSingleObjectiveOptimizer:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content
+        return _response_content_to_text(response.choices[0].message.content)
 
     def _parse_and_validate(self, response: str) -> dict[str, float]:
-        text = response.strip()
-        # Allow fenced code blocks
-        if "```" in text:
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start >= 0 and end > start:
-                text = text[start:end]
-
+        text = _extract_first_json_object_text(response)
         data = json.loads(text)
         if not isinstance(data, dict):
             raise ValueError("Expected a JSON object mapping parameter names to floats.")
