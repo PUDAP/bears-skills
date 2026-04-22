@@ -30,6 +30,7 @@ Environment variable (LLM optimizers):
 from __future__ import annotations
 
 import json
+import re
 import os
 from abc import ABC, abstractmethod
 from typing import Any
@@ -356,7 +357,7 @@ class SOCM_LLM:
         target_colour: tuple[int, int, int],
         total_volume: float,
         api_key: str | None = None,
-        max_retries: int = 3,
+        max_retries: int = 6,
     ) -> None:
         self.model = model
         self.target_colour = target_colour
@@ -461,7 +462,20 @@ class SOCM_LLM:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+            return "".join(parts)
+        return str(content)
 
     def _parse_and_validate(self, response: str) -> list[float]:
         """
@@ -478,7 +492,18 @@ class SOCM_LLM:
             KeyError: If required keys are missing.
             ValueError: If volumes do not sum to total_volume (±1 µL tolerance).
         """
-        data = json.loads(response)
+        cleaned = response.strip()
+        if not cleaned:
+            raise ValueError("Model returned an empty response.")
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
+        if not cleaned.startswith("{"):
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match:
+                cleaned = match.group(0)
+        data = json.loads(cleaned)
         r, g, b = float(data["R_vol"]), float(data["G_vol"]), float(data["B_vol"])
 
         if abs(r + g + b - self.total_volume) > 1.0:
