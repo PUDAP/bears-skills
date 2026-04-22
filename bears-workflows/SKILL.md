@@ -36,7 +36,7 @@ Use this experiment when:
 
 Runner script: [`scripts/run_colour_mixing.py`](scripts/run_colour_mixing.py)
 - End-to-end experiment runner; edit the config block at the top to change parameters
-- Set `ROBOT_IP` to the OT-2 IP address for fully automated protocol execution via HTTP API
+- Set `ROBOT_IP` to the OT-2 IP address in `.env` for fully automated protocol execution via HTTP API
 - Set `OPENROUTER_API_KEY` environment variable before running
 - Outputs: generated protocols in `protocols/`, corrected images in `images/`, live report in `reports/report.md`
 
@@ -89,7 +89,7 @@ When answering experiment-selection questions:
 ## Critical Rules
 
 1. Always ask for all required inputs (target colour, thresholds, limits, deck layout) **before** starting any experiment.
-2. Ask the user for the **OT-2 robot IP address** before running — set it as `ROBOT_IP` in the runner script.
+2. Ask the user for the **OT-2 robot IP address** before running, and set it as `ROBOT_IP` in `.env`.
 3. Ask the user for the **OpenRouter API key** if not already set in the environment.
 4. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 5. Opentrons protocols must always end with no tip attached to any pipette.

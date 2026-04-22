@@ -82,7 +82,7 @@ Use for **automated liquid handling and full protocol generation on the Opentron
 
 Capabilities:
 - Full protocol code generation via `Protocol.to_python_code()` — produces valid runnable OT-2 Python
-- Pipetting workflows: `aspirate`, `dispense`, `mix`, `transfer` (with auto-chunking for large volumes)
+- Pipetting workflows: `aspirate`, `dispense`, `transfer` (with auto-chunking for large volumes)
 - Tip management: `pick_up_tip`, `drop_tip`
 - Deck and labware setup: `load_labware`, `load_instrument`
 - Flow control: `flow_rate`, `air_gap`, `blow_out`, `touch_tip`, `move_to`
