@@ -13,6 +13,7 @@ Invoke these skills before generating any commands:
 - **puda-machines** → opentrons machine (liquid handling + `camera_capture`)
 - **puda-protocol** → protocol generation and execution
 - **puda-memory** → update `experiment.md` after every protocol creation and run
+- **puda-report** → resolve the report **save path / output folder** only (the report filename and markdown layout are defined in this document)
 
 ## Required Machine
 
@@ -45,10 +46,7 @@ See [optimization.md](optimization.md) for implementation details.
 This applies to every iteration.
 
 Mandatory Rules
--Always create a new run per protocol
--Never reuse run_id
 -Never send play twice on same run
--Never start a run if another run is active
 -Always poll until run reaches terminal state: successded, failed or stopped 
 
 Hard Gate Condition
@@ -184,7 +182,7 @@ Pass all `(volume_ratios, RMSE)` pairs (one per active well) to the chosen optim
 The optimizer returns the next `(R_vol, G_vol, B_vol)` to try.
 
 **Step 10 — Iteration report**
-For each new set of optimization, create a new report file named `reports/colour-mixing-report-<sample name that user input>.md`. Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
+For each new set of optimization, create a new report file named `colour-mixing-report-<sample name that user input>.md`. Defer to the **puda-report** skill only for the save path / output folder — the filename above and the markdown layout described below in this document are authoritative (puda-report decides **where** the file is written, not **how** it is written). Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
 
 Each `x_init` log block must record:
 - Which seed run it is: `x_init 1`, `x_init 2`, or `x_init 3`
@@ -242,7 +240,7 @@ Stop when **either** is met:
 | `RMSE ≤ threshold` | Target colour matched within acceptable error |
 | `iteration ≥ max_iter` | Maximum optimization iterations reached (not counting the 3 `x_init` mixes) |
 
-On stop: generate a final summary report and save it to `reports/colour-mixing-report-<sample name that user input>.md`.
+On stop: generate a final summary report using the markdown structure defined in this document, and write it to `colour-mixing-report-<sample name that user input>.md` at the save path resolved by the **puda-report** skill.
 
 ## Rules
 
@@ -257,4 +255,5 @@ On stop: generate a final summary report and save it to `reports/colour-mixing-r
 - Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`
 - Protocol must always end with no tip attached (Opentrons sequencing rule).
 - Invoke **puda-memory** after every protocol creation and run.
+- Use **puda-report** only to resolve the report **save path / output folder**. The report filename (`colour-mixing-report-<sample name that user input>.md`) and the markdown layout (`x_init N` blocks, `Iteration N` blocks, final summary) are defined in this document and must not be changed by puda-report.
 - **If unsure about any input, parameter, or decision — ask the user. Do not assume.**
