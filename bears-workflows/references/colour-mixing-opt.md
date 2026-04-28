@@ -115,7 +115,7 @@ For `measured_target_mix`:
 - Do not include the target-mix calibration well in `x_init` observations or optimizer history.
 - If protocol execution, image capture, or image processing fails, stop before generating `x_init` and require recovery.
 
-After deriving the measured target RGB, present it to the user in the setup summary and ask for explicit confirmation before generating `x_init`.
+After deriving the measured target RGB, record it as the target colour and continue to `x_init` without asking for another user confirmation.
 
 **`x_init` — Initial volume inputs**
 
@@ -151,7 +151,7 @@ The confirmation summary must include:
 
 Do not generate the `x_init` protocol until the user confirms that the full setup is correct.
 
-If `measured_target_mix` is selected, the target-mix calibration protocol may be generated and executed only after the user confirms the target-mix setup. After the target image is processed, ask for a second confirmation of the measured target RGB before generating `x_init`.
+If `measured_target_mix` is selected, the target-mix calibration protocol may be generated and executed only after the user confirms the target-mix setup. After the target image is processed successfully, continue directly to `x_init` using the measured target RGB.
 
 **Step 2 — Initial mixes (`x_init`)**
 Generate a single protocol that dispenses all 3 initial volume combinations into the 3 user-selected `x_init` destination wells and execute it on the Opentrons. Record which confirmed well received which `(R_vol, G_vol, B_vol)` set.
