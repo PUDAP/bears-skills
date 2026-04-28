@@ -71,12 +71,14 @@ Collect all of the following before starting. Do not proceed until every value i
 | Target colour source | Choose either `manual_rgb` or `measured_target_mix` |
 | Target colour — if `manual_rgb` | `(R, G, B)` where each value is 0–255 |
 | Target mix volumes — if `measured_target_mix` | One `(R_vol, G_vol, B_vol)` set in µL to dispense, capture, process, and use as the target RGB |
+| Target mix volume well — if `measured_target_mix` | Mapping of the target mix volume set to the destination well, for example `(100, 100, 100) µL -> C1` |
 | Target mix destination well — if `measured_target_mix` | Well used for the target-mix calibration run; this target well is not an optimization seed well |
 | Total well volume | Total volume in µL per well (e.g. 300 µL) |
 | **R dye source — deck slot** | OT-2 deck slot (`"1"`–`"11"`) for the labware holding **red** dye only |
 | **G dye source — deck slot** | Deck slot for the labware holding **green** dye only |
 | **B dye source — deck slot** | Deck slot for the labware holding **blue** dye only |
 | `x_init` — 3 initial mixes | User-provided volume sets (see below) |
+| `x_init` destination wells | Three user-selected destination wells, one for each `x_init` mix |
 | Optimization approach | BO (EI or LCB) or LLM (choose model) |
 | RMSE threshold | Stop when RMSE ≤ this value |
 | Maximum iterations | Stop after this many iterations |
@@ -105,6 +107,7 @@ For `measured_target_mix`:
 - Ask for one target mix volume set `(R_vol, G_vol, B_vol)` in µL.
 - Validate that the target mix volumes sum to `total_volume` (±1 µL tolerance).
 - Ask for the destination well used for this target-mix calibration run.
+- Record the target mix volume well mapping explicitly, for example `(R_vol, G_vol, B_vol) -> target_well`.
 - Generate a standalone protocol that dispenses only this target mix.
 - Execute the protocol, then capture one whole-wellplate image.
 - Run `run_pipeline(image_path, well_ids=[target_well], config=DEFAULT_CONFIG)`.
@@ -119,6 +122,15 @@ After deriving the measured target RGB, present it to the user in the setup summ
 Ask the user to provide exactly 3 initial volume combinations for R, G, B dye in µL. Each set must sum to the total well volume.
 Validate each set before generating the protocol — reject and re-ask if any set does not sum to `total_volume` (±1 µL tolerance).
 
+Ask the user to choose exactly 3 destination wells for `x_init`, one well for each initial volume combination.
+
+Validation rules:
+- Each `x_init` well must be a valid well ID for the destination labware.
+- The 3 `x_init` wells must be unique.
+- The selected wells must be mapped explicitly to the 3 initial volume combinations, for example: `x_init 1 -> B1`, `x_init 2 -> B2`, `x_init 3 -> B3`.
+- If `measured_target_mix` used a well in the same destination plate, the `x_init` wells must not include the target well unless the user explicitly confirms the plate has been cleared or replaced.
+- Do not assume `A1`, `A2`, and `A3`; use only the wells confirmed by the user.
+
 **Step 1a — User confirmation before execution**
 After all inputs have been collected and validated, present a setup summary back to the user that also states the labware positions, and ask for explicit confirmation before generating or executing any protocol.
 
@@ -129,8 +141,9 @@ The confirmation summary must include:
 - Labware positions
 - R / G / B source deck slots
 - If `manual_rgb`: target colour RGB
-- If `measured_target_mix`: target mix volumes, target mix destination well, and planned target image filename
+- If `measured_target_mix`: target mix volumes, target mix destination well, target mix volume well mapping, and planned target image filename
 - All 3 `x_init` volume combinations
+- All 3 `x_init` destination wells and their mapping to the initial volume combinations
 - Optimization approach
 - RMSE threshold
 - Maximum iterations
@@ -141,7 +154,7 @@ Do not generate the `x_init` protocol until the user confirms that the full setu
 If `measured_target_mix` is selected, the target-mix calibration protocol may be generated and executed only after the user confirms the target-mix setup. After the target image is processed, ask for a second confirmation of the measured target RGB before generating `x_init`.
 
 **Step 2 — Initial mixes (`x_init`)**
-Generate a single protocol that dispenses all 3 initial volume combinations into 3 separate wells (e.g. A1, A2, A3) and execute it on the Opentrons. Record which well received which `(R_vol, G_vol, B_vol)` set.
+Generate a single protocol that dispenses all 3 initial volume combinations into the 3 user-selected `x_init` destination wells and execute it on the Opentrons. Record which confirmed well received which `(R_vol, G_vol, B_vol)` set.
 
 If `measured_target_mix` used a well in the same destination plate, reserve that target well and do not reuse it for `x_init` or later optimization wells unless the user explicitly confirms the plate has been cleared or replaced.
 
@@ -194,6 +207,8 @@ All parameters are stored in `DEFAULT_CONFIG` in `image_processing.py`. Re-calib
 **Step 4 — Image processing**
 Call `run_pipeline(image_path, well_ids, config=DEFAULT_CONFIG)` on the captured image. The pipeline uses fixed calibrated parameters for perspective correction and ROI slicing.
 
+For the `x_init` image, `well_ids` must be the 3 user-selected `x_init` destination wells in the same order as the confirmed `x_init` mapping.
+
 See [image-processing.md](image-processing.md).
 
 **Step 5 — ROI extraction for all wells**
@@ -201,9 +216,9 @@ Slice the warped plate image into one ROI patch per well, in row-major order (le
 
 **Step 6 — RGB extraction from active wells**
 Compute the median RGB for each extracted ROI patch. Then select the RGB values for the wells that contain the mixes (by `well_id`, derived from the protocol's well assignments):
-- Well index for A1 → `(R_mix_1, G_mix_1, B_mix_1)`
-- Well index for A2 → `(R_mix_2, G_mix_2, B_mix_2)`
-- Well index for A3 → `(R_mix_3, G_mix_3, B_mix_3)`
+- User-selected `x_init 1` well → `(R_mix_1, G_mix_1, B_mix_1)`
+- User-selected `x_init 2` well → `(R_mix_2, G_mix_2, B_mix_2)`
+- User-selected `x_init 3` well → `(R_mix_3, G_mix_3, B_mix_3)`
 
 **Step 7 — RMSE calculation**
 Compute RMSE for each well that received a mix:
@@ -225,6 +240,7 @@ For each new set of optimization, create a new report file named `colour-mixing-
 
 Each `x_init` log block must record:
 - Which seed run it is: `x_init 1`, `x_init 2`, or `x_init 3`
+- The user-selected destination well for that seed run
 - RMSE for that initial mix only
 - The volume ratio and measured RGB value for that initial mix only
 
@@ -307,6 +323,7 @@ On stop: generate a final summary report using the markdown structure defined in
 - Always ask for target colour source, RMSE threshold, and max iterations **before** starting.
 - If target colour source is `manual_rgb`, validate and use the user-provided target RGB.
 - If target colour source is `measured_target_mix`, run the target-mix calibration, process the target well image, and use the measured RGB as the target before generating `x_init`.
+- Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
 - Always collect **three separate deck slots** for R, G, and B dye source labware before any `load_labware` for those sources; never use one slot for all three.
 - Always ask the user for explicit confirmation after all required inputs are collected and validated, before the first protocol is generated or executed.
 - Never ask the user to paste API keys, tokens, passwords, or other secrets into chat.
