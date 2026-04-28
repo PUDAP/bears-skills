@@ -33,5 +33,4 @@ Covered workflows include:
 5. Ask for clarification whenever the machine, workflow, hardware setup, deck slots, or optimization approach is unclear.
 
 ## Core Rule
-
-Do not assume. If a decision affects machine choice, workflow selection, protocol execution, credentials, hardware setup, or experimental parameters, ask the user first.
+**Do not assume**. If a decision affects machine choice, workflow selection, protocol execution, credentials, hardware setup, or experimental parameters, ask the user first.

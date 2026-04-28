@@ -65,7 +65,6 @@ OPENROUTER_MODELS: dict[str, str] = {
     "claude-sonnet-4.6": "anthropic/claude-sonnet-4.6",
     "claude-opus-4":     "anthropic/claude-opus-4",
     "claude-opus-4.7":   "anthropic/claude-opus-4.7",
-    "claude-opus-4-7":   "anthropic/claude-opus-4.7",
     "gemini-3.1-pro-preview": "google/gemini-3.1-pro-preview",
     "gemini-2.5-pro":    "google/gemini-2.5-pro-preview",
     "llama-4-maverick":  "meta-llama/llama-4-maverick",
