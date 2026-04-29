@@ -66,7 +66,7 @@ If `llm` is selected, any required credential such as `OPENROUTER_API_KEY` must 
 | Input | Description |
 |---|---|
 | Measurement phase | `"aspirate"` or `"dispense"` — which phase the balance records |
-| Outlier threshold | Weight readings (g) below this value are discarded |
+| Outlier threshold | Mass readings (mg) below this value are discarded |
 
 **d) Stop conditions**
 
@@ -80,6 +80,12 @@ If `llm` is selected, any required credential such as `OPENROUTER_API_KEY` must 
 
 For the pipette:
 - Variable name, instrument type, mount (`"left"` or `"right"`)
+
+Tip usage must start at `A1` and advance one tip per protocol run in row-major order:
+```text
+A1, A2, A3, A4, ... A12, B1, B2, ... H12
+```
+For example, iteration 1 uses `A1`, iteration 2 uses `A2`, iteration 3 uses `A3`, and iteration 4 uses `A4`. Do not reuse a tip or skip ahead unless the user explicitly confirms a new tip rack state.
 
 > `load_labware` and `load_instrument` are **injected automatically** — do not add them to the protocol steps.
 
@@ -132,7 +138,7 @@ Build the protocol with current optimizer-suggested parameter values and execute
 **Step 4 — Collect concurrent data**
 
 During the run, two concurrent threads record:
-- Balance readings at **4 Hz** — reads `get_mass()["mass_g"]` with `timestamp`
+- Balance readings at **4 Hz** — reads fresh `get_mass()["mass_g"]`, converts to `mass_mg = mass_g * 1000`, and records `mass_mg` with `timestamp`
 - OT-2 run status at **4 Hz** — `ot2_command`, `ot2_status`
 
 Only readings where `get_mass()["fresh"] == True` (age < 5 s) are considered valid.
@@ -144,12 +150,12 @@ data/viscosity_raw_data/<sample>_iter<NNN>_<YYYYMMDD_HHMMSS>.csv
 
 **Step 5 — Process data**
 
-The raw CSV is processed:
+Use [`../scripts/balance_data_process.py`](../scripts/balance_data_process.py) to merge protocol commands with balance readings and process the raw CSV:
 1. Strip apostrophes from serial output
-2. Remove outlier rows where `mass_g` is below `outlier_threshold`
+2. Remove outlier rows where `mass_mg` is below `outlier_threshold`
 3. Forward-fill OT-2 command labels onto balance rows
 4. Slice to the `measurement_phase` window only
-5. Normalise `Time` and `Weight` to start at 0
+5. Normalise `Time` and `mass_mg` to start at 0
 
 Processed data is saved to:
 ```
@@ -260,9 +266,10 @@ exp.run()
 - Never ask the user to paste API keys, tokens, passwords, or other secrets into chat.
 - If `llm` optimization requires credentials such as `OPENROUTER_API_KEY`, require them to be pre-configured in the local environment outside the chat before running.
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
-- Only use `get_mass()["mass_g"]` where `fresh == True` — discard stale readings (age ≥ 5 s).
+- Only use `get_mass()["mass_g"]` where `fresh == True`, convert it to `mass_mg = mass_g * 1000`, and discard stale readings (age ≥ 5 s).
 - Call `driver.tare(wait=2.0)` at the start of each iteration before running the protocol.
 - Call `driver.shutdown()` after all iterations are complete to close the serial port cleanly.
+- Pick up tips sequentially from the tip rack starting at `A1`, then `A2`, `A3`, `A4`, and continue in row-major order for every later run.
 - Protocol must always end with no tip attached (Opentrons sequencing rule).
 - Invoke **puda-report** at completion to extract, hash, and report the experiment data.
 - Invoke **puda-memory** after every protocol creation and run.
