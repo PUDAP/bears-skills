@@ -539,6 +539,6 @@ def calculate_signed_error(actual_weight_change: float, target_weight_change: fl
     Calculate signed error between actual and target weight change in mg.
 
     Weight changes may be negative for aspiration. Error is actual - target:
-    positive means under-aspiration; negative means over-aspiration.
+    positive means over-aspiration; negative means under-aspiration.
     """
     return float(actual_weight_change) - float(target_weight_change)
