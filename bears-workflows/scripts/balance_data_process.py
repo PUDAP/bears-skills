@@ -387,7 +387,7 @@ def analyze_latest_viscosity_experiment(
         return {"success": False, "message": "pandas not installed"}
 
     if csv_file_path is None:
-        raw_data_dir = Path("data") / "viscosity_raw_data"
+        raw_data_dir = Path("reports") / "viscosity_raw_data"
         if not raw_data_dir.exists():
             return {
                 "success": False,
@@ -407,7 +407,7 @@ def analyze_latest_viscosity_experiment(
     csv_file_path = Path(csv_file_path)
 
     if base_output_dir is None:
-        processed_dir = Path("data") / "viscosity_processed_data"
+        processed_dir = Path("reports") / "viscosity_processed_data"
     else:
         processed_dir = Path(base_output_dir) / "viscosity_processed_data"
 
@@ -460,7 +460,7 @@ def plot_and_save_viscosity_graph(
         return None
 
     if graph_output_dir is None:
-        graph_output_dir = Path("data") / "viscosity_graphs"
+        graph_output_dir = Path("reports") / "viscosity_graphs"
     else:
         graph_output_dir = Path(graph_output_dir)
 
