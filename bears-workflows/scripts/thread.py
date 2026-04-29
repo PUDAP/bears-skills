@@ -1,191 +1,215 @@
 """
 Threaded monitors for viscosity optimization workflows.
 
-- ``monitor_balance_threaded``  — collect mass readings from the PUDA balance
-  driver at 4 Hz concurrently with an Opentrons OT-2 protocol run.
+- ``monitor_balance_threaded``         — stream mass readings from the PUDA
+  balance via NATS (``puda machine watch``, subject ``puda.balance.tlm.pos``)
+  at ~4 Hz concurrently with an OT-2 run.
 - ``monitor_protocol_status_threaded`` — poll OT-2 run status and collect
   protocol commands via HTTP; sets ``stop_event`` when the run is terminal.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
 import threading
 import time
 from datetime import datetime
-from typing import Any
+from pathlib import Path
 
 try:
     import requests
-except ImportError:  # pragma: no cover - optional runtime dependency
-    requests = None
-
-try:
-    import requests
-except ImportError:  # pragma: no cover - optional runtime dependency
+except ImportError:  # pragma: no cover
     requests = None  # type: ignore[assignment]
 
 try:
     import pandas as pd
-except ImportError:  # pragma: no cover - optional runtime dependency
+except ImportError:  # pragma: no cover
     pd = None
 
 
 def _sanitize_filename(name: str) -> str:
-    """Replace characters unsafe for filenames with underscores."""
-    return re.sub(r'[^\w\-.]', '_', name)
+    return re.sub(r"[^\w\-.]", "_", name)
 
+
+# ---------------------------------------------------------------------------
+# Balance monitor — NATS telemetry via puda machine watch
+# ---------------------------------------------------------------------------
 
 def monitor_balance_threaded(
-    driver: Any,
     *,
-    frequency: int = 4,
     sample_name: str = "sample",
     save_csv: bool = True,
     csv_dir: str | None = None,
     stop_event: threading.Event | None = None,
     max_duration: float | None = None,
     result_dict: dict | None = None,
+    puda_exe: str | None = None,
 ) -> None:
     """
-    Collect balance readings in a background thread during an Opentrons run.
+    Stream balance readings via NATS (``puda machine watch``) during an OT-2 run.
 
-    Designed to run as the target of a ``threading.Thread``. Reads from the
-    PUDA balance driver at *frequency* Hz until either *stop_event* is set
-    (Opentrons run reached a terminal state) or *max_duration* seconds have
-    elapsed — whichever comes first.
+    Subscribes to ``puda.balance.tlm.pos`` by launching ``puda machine watch``
+    as a subprocess and parsing its JSON line output.  Only fresh readings are
+    stored (~4 Hz).  The subprocess is terminated when *stop_event* is set or
+    *max_duration* seconds have elapsed.
 
     Args:
-        driver:       Initialised balance driver instance (exposes ``get_mass()``).
-        frequency:    Target reading rate in Hz. Default 4.
-        sample_name:  Used to build the output CSV filename.
-        save_csv:     Write a CSV to *csv_dir* when monitoring ends.
-        csv_dir:      Directory for the raw CSV. Defaults to
+        sample_name:  Used to name the output CSV file.
+        save_csv:     Write a CSV to *csv_dir* on stop.
+        csv_dir:      Output directory.  Defaults to
                       ``reports/viscosity_raw_data``.
-        stop_event:   ``threading.Event`` set by the caller when the OT-2 run
-                      reaches a terminal state. Create with
-                      ``threading.Event()`` and call ``.set()`` after polling
-                      confirms the run is done.
-        max_duration: Hard upper bound in seconds. Stops even if *stop_event*
-                      is never set. ``None`` means no limit.
-        result_dict:  Dict updated in-place with results so the caller can
-                      read them after ``thread.join()``. Keys written:
-                      ``balance_readings``, ``csv_path``, ``balance_complete``,
-                      and optionally ``balance_error``.
+        stop_event:   Set by the protocol monitor when the OT-2 run reaches a
+                      terminal state.  Balance monitoring stops immediately.
+        max_duration: Hard upper bound in seconds.  ``None`` means no limit.
+        result_dict:  Updated in-place with ``balance_readings``,
+                      ``csv_path``, ``balance_complete``, and optionally
+                      ``balance_error``.
+        puda_exe:     Path to the ``puda`` executable.  Defaults to
+                      ``puda.exe`` in the parent of this script's directory,
+                      falling back to ``"puda"`` on PATH.
 
     Usage::
 
-        from balance_thread import monitor_balance_threaded
+        from thread import monitor_balance_threaded, monitor_protocol_status_threaded
 
         stop_event = threading.Event()
-        result = {}
-        t = threading.Thread(
+        balance_result, protocol_result = {}, {}
+
+        bt = threading.Thread(
             target=monitor_balance_threaded,
-            kwargs=dict(
-                driver=driver,
-                sample_name="glycerol_50pct",
-                stop_event=stop_event,
-                max_duration=120,
-                result_dict=result,
-            ),
+            kwargs=dict(sample_name="glycerol_50pct",
+                        stop_event=stop_event, max_duration=600,
+                        result_dict=balance_result),
+            daemon=True,
+        )
+        pt = threading.Thread(
+            target=monitor_protocol_status_threaded,
+            kwargs=dict(robot_ip=robot_ip, run_id=run_id,
+                        stop_event=stop_event,
+                        protocol_start_time=time.time(),
+                        result_dict=protocol_result),
             daemon=True,
         )
 
-        # Hard gate: confirm balance is streaming before play
-        m = driver.get_mass()
-        if not m.get("fresh") or m.get("age", 999) >= 5:
-            raise RuntimeError("Balance not streaming fresh readings — abort before play.")
+        bt.start()
+        pt.start()
+        ot2_client.play(run_id)
 
-        driver.tare(wait=2.0)
-        t.start()
+        pt.join()
+        stop_event.set()   # safety: ensure balance thread stops
+        bt.join()
 
-        ot2_client.play(run_id)      # send play only after thread is started
-        poll_until_terminal(run_id)  # poll OT-2 status
-        stop_event.set()             # signal thread to stop
-        t.join()                     # wait for final readings to flush
-
-        balance_readings = result["balance_readings"]
-        csv_path = result.get("csv_path")
+        balance_readings = balance_result["balance_readings"]
+        csv_path = balance_result.get("csv_path")
     """
     if csv_dir is None:
         csv_dir = os.path.join("reports", "viscosity_raw_data")
-
     if result_dict is None:
         result_dict = {}
-
     if stop_event is None:
         stop_event = threading.Event()
 
-    reading_interval = 1.0 / frequency
-    start_time = datetime.now()
+    # Resolve puda executable and working directory
+    if puda_exe is None:
+        _candidate = Path(__file__).resolve().parent.parent / "puda.exe"
+        puda_exe = str(_candidate) if _candidate.exists() else "puda"
+    _puda_path = Path(puda_exe)
+    cwd = str(_puda_path.parent) if _puda_path.exists() else None
+
+    # Give the subprocess a generous timeout; we terminate it ourselves on stop
+    watch_timeout = int(max_duration) + 60 if max_duration is not None else 86400
+
+    cmd = [
+        puda_exe,
+        "machine", "watch",
+        "--targets", "balance",
+        "--subjects", "pos",
+        "--timeout", str(watch_timeout),
+    ]
+
     balance_readings: list[dict] = []
     csv_path: str | None = None
     reading_count = 0
-    next_reading_time = time.time()
+    start_time = time.time()
 
-    print(f"Starting balance monitoring at {frequency} Hz "
+    print(f"Starting balance monitoring via puda.balance.tlm.pos "
           f"(max {max_duration if max_duration else 'unlimited'} s) …")
 
     try:
-        while True:
-            if max_duration is not None:
-                elapsed = (datetime.now() - start_time).total_seconds()
-                if elapsed >= max_duration:
-                    print(f"Balance monitoring: max duration ({max_duration} s) reached — "
-                          f"{reading_count} readings collected.")
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            cwd=cwd,
+        )
+
+        try:
+            for line in proc.stdout:  # type: ignore[union-attr]
+                if stop_event.is_set():
+                    break
+                if max_duration is not None and (time.time() - start_time) >= max_duration:
                     break
 
-            if stop_event.is_set():
-                print(f"Balance monitoring: stop_event set — {reading_count} readings collected.")
-                break
+                line = line.strip()
+                if not line:
+                    continue
 
-            current_time = time.time()
-            sleep_time = next_reading_time - current_time
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-            next_reading_time += reading_interval
+                try:
+                    data = json.loads(line).get("data", {})
+                    if not data.get("fresh"):
+                        continue
+                    mass_g = data.get("mass_g")
+                    if mass_g is None:
+                        continue
+                    mass_mg = data.get("mass_mg") or mass_g * 1000
+                    elapsed = time.time() - start_time
 
-            try:
-                m = driver.get_mass()
-                if m.get("fresh"):
-                    mass_g = m["mass_g"]
-                    elapsed_time = (datetime.now() - start_time).total_seconds()
                     balance_readings.append({
-                        "time": elapsed_time,
+                        "time": round(elapsed, 3),
                         "mass_g": mass_g,
-                        "mass_mg": mass_g * 1000,
+                        "mass_mg": mass_mg,
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
                     })
                     reading_count += 1
 
-                    if reading_count % (frequency * 10) == 0:
+                    if reading_count % 40 == 0:  # log every ~10 s at 4 Hz
                         print(f"  Balance reading {reading_count}: "
-                              f"{mass_g * 1000:.2f} mg @ {elapsed_time:.2f} s")
-                else:
-                    age = m.get("age", "?")
-                    if reading_count % (frequency * 5) == 0:
-                        print(f"  Stale balance reading skipped (age={age} s)")
+                              f"{mass_mg:.2f} mg @ {elapsed:.2f} s")
 
-            except Exception as exc:
-                if reading_count % (frequency * 5) == 0:
-                    print(f"  Balance read error: {exc}")
-                continue
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        stop_reason = (
+            "stop_event" if stop_event.is_set()
+            else f"max_duration ({max_duration} s)" if max_duration
+            else "subprocess ended"
+        )
+        print(f"Balance monitoring stopped ({stop_reason}) — "
+              f"{reading_count} readings collected.")
 
         if save_csv and balance_readings:
             try:
                 os.makedirs(csv_dir, exist_ok=True)
                 safe_name = _sanitize_filename(sample_name)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                csv_filename = f"balance_{safe_name}_{ts}.csv"
-                csv_path = os.path.join(csv_dir, csv_filename)
-
+                csv_path = os.path.join(csv_dir, f"balance_{safe_name}_{ts}.csv")
                 if pd is None:
                     print("Cannot save CSV: pandas is not installed.")
                 else:
                     pd.DataFrame(balance_readings).to_csv(csv_path, index=False)
                     print(f"Balance data saved: {csv_path} ({len(balance_readings)} readings)")
-
             except Exception as exc:
                 print(f"Could not save balance CSV: {exc}")
 
@@ -208,7 +232,7 @@ def monitor_balance_threaded(
 
 
 # ---------------------------------------------------------------------------
-# Opentrons protocol monitor
+# Opentrons protocol monitor — helpers
 # ---------------------------------------------------------------------------
 
 def _normalize_cmd_type(ctype: str) -> str:
@@ -235,8 +259,8 @@ def _parse_cmd(cmd: dict, start_time: float) -> dict | None:
     """
     Parse a single Opentrons command dict.
 
-    Returns a command record dict if the command is one we track, else None.
-    Prints a human-readable summary of the command as a side-effect.
+    Returns a normalised record dict if the command is tracked, else None.
+    Prints a human-readable summary as a side-effect.
     """
     ctype = cmd.get("commandType", "")
     params = cmd.get("params", {})
@@ -244,17 +268,17 @@ def _parse_cmd(cmd: dict, start_time: float) -> dict | None:
     seconds = params.get("seconds")
     minutes = params.get("minutes")
 
-    # Extract location
     well = params.get("wellName") or params.get("well") or params.get("wellLocation")
     labware = params.get("labwareId") or params.get("labware") or params.get("labwareLocation")
     if isinstance(well, dict):
         well = well.get("wellName") or well.get("well") or well.get("name")
     if isinstance(labware, dict):
         labware = labware.get("labwareId") or labware.get("labware") or labware.get("name")
-    parts = [str(x) for x in (labware, well) if x]
-    location = " / ".join(parts) if parts else "Unknown"
+    location = " / ".join(str(x) for x in (labware, well) if x) or "Unknown"
 
-    is_delay_by_params = (seconds is not None or minutes is not None) and volume is None and location == "Unknown"
+    is_delay_by_params = (
+        (seconds is not None or minutes is not None) and volume is None and location == "Unknown"
+    )
 
     cl = ctype.lower()
     tracked = (
@@ -279,10 +303,7 @@ def _parse_cmd(cmd: dict, start_time: float) -> dict | None:
 
     delay_duration: float | str = ""
     if ntype == "delay":
-        if seconds is not None:
-            delay_duration = seconds
-        elif minutes is not None:
-            delay_duration = minutes * 60
+        delay_duration = seconds if seconds is not None else (minutes * 60 if minutes is not None else "")
 
     if ntype in ("aspirate", "dispense"):
         vol_str = f" {volume} µL" if volume is not None else ""
@@ -302,6 +323,10 @@ def _parse_cmd(cmd: dict, start_time: float) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Opentrons protocol monitor
+# ---------------------------------------------------------------------------
+
 def monitor_protocol_status_threaded(
     robot_ip: str,
     run_id: str | None = None,
@@ -317,14 +342,14 @@ def monitor_protocol_status_threaded(
 
     Polls the robot HTTP API for run status and command list, collecting
     aspirate/dispense/delay/tip commands with timestamps.  Sets *stop_event*
-    when the protocol reaches a terminal state so that a concurrent
+    when the protocol reaches a terminal state so the concurrent
     ``monitor_balance_threaded`` thread knows to stop.
 
     Args:
         robot_ip:             IP address of the OT-2 robot.
         run_id:               Specific run ID to monitor.  If *None* the most
                               recent (or currently-running) run is used.
-        max_wait_time:        Seconds before giving up and timing out.
+        max_wait_time:        Seconds before timing out.
         check_interval:       Polling interval in seconds.
         api_base_url:         Ignored; present for backward compatibility.
         result_dict:          Updated in-place with ``protocol_status``,
@@ -355,7 +380,6 @@ def monitor_protocol_status_threaded(
     last_status: str | None = None
     initial_run_id = run_id
     run_id_verified = False
-    monitoring_start = time.time()
     last_warning = 0.0
     conn_errors = 0
     elapsed = 0
@@ -364,11 +388,8 @@ def monitor_protocol_status_threaded(
     def _finish(status: str) -> None:
         nonlocal protocol_complete
         print(f"✅ Protocol completed with status: {status}")
-        result_dict.update(
-            protocol_status=status,
-            protocol_complete=True,
-            protocol_commands=commands,
-        )
+        result_dict.update(protocol_status=status, protocol_complete=True,
+                           protocol_commands=commands)
         stop_event.set()
         protocol_complete = True
 
@@ -482,245 +503,12 @@ def monitor_protocol_status_threaded(
 
         if not protocol_complete:
             print("⚠️ Timeout waiting for protocol completion")
-            result_dict.update(protocol_status="timeout", protocol_complete=True, protocol_commands=commands)
+            result_dict.update(protocol_status="timeout", protocol_complete=True,
+                               protocol_commands=commands)
             stop_event.set()
 
     except Exception as exc:
         print(f"❌ Protocol monitoring error: {exc}")
-        result_dict.update(
-            protocol_status="error",
-            protocol_complete=True,
-            protocol_commands=commands,
-            protocol_error=str(exc),
-        )
-        stop_event.set()
-
-
-# ---------------------------------------------------------------------------
-# Command-type normalisation helpers
-# ---------------------------------------------------------------------------
-
-_TERMINAL_STATUSES = {"succeeded", "failed", "stopped"}
-
-_COMMAND_NORM: dict[str, str] = {
-    "aspirate": "aspirate", "aspirating": "aspirate",
-    "dispense": "dispense", "dispensing": "dispense",
-    "pickuptip": "pickUpTip", "pick_up_tip": "pickUpTip", "picking up tip": "pickUpTip",
-    "droptip": "dropTip", "drop_tip": "dropTip", "dropping tip": "dropTip",
-    "delay": "delay", "pausing": "delay", "wait": "delay",
-    "touchtip": "touchTip", "touching tip": "touchTip",
-    "blowout": "blowout", "blowing out": "blowout",
-}
-
-_TRACKED = frozenset(_COMMAND_NORM.keys())
-
-
-def _normalize_command(raw: str) -> str | None:
-    """Return a normalised command label, or None if not a tracked type."""
-    key = raw.lower().replace("-", "").replace(" ", " ").strip()
-    if key in _COMMAND_NORM:
-        return _COMMAND_NORM[key]
-    for fragment, label in (
-        ("aspirat", "aspirate"), ("dispens", "dispense"),
-        ("pickup", "pickUpTip"), ("pickuptip", "pickUpTip"),
-        ("droptip", "dropTip"), ("delay", "delay"),
-        ("paus", "delay"), ("wait", "delay"),
-        ("touchtip", "touchTip"), ("blowout", "blowout"),
-    ):
-        if fragment in key:
-            return label
-    return None
-
-
-def _extract_location(params: dict) -> str:
-    well = params.get("wellName") or params.get("well") or params.get("wellLocation")
-    labware = params.get("labwareId") or params.get("labware") or params.get("labwareLocation")
-    if isinstance(well, dict):
-        well = well.get("wellName") or well.get("well") or well.get("name")
-    if isinstance(labware, dict):
-        labware = labware.get("labwareId") or labware.get("labware") or labware.get("name")
-    parts = [str(x) for x in (labware, well) if x]
-    return " / ".join(parts) if parts else "Unknown"
-
-
-def _parse_command(cmd: dict, protocol_start_time: float) -> dict | None:
-    """Parse a raw OT-2 command dict into a normalised record, or None if not tracked."""
-    ctype = cmd.get("commandType", "")
-    params = cmd.get("params", {})
-    volume = params.get("volume")
-    seconds = params.get("seconds")
-    minutes = params.get("minutes")
-    location = _extract_location(params)
-
-    # Detect delay-by-params: has time fields, no volume, no location
-    is_delay_params = (seconds is not None or minutes is not None) and volume is None and location == "Unknown"
-    norm = _normalize_command(ctype) or ("delay" if is_delay_params else None)
-    if norm is None:
-        return None
-
-    delay_duration: float | str = ""
-    if norm == "delay":
-        if seconds is not None:
-            delay_duration = seconds
-        elif minutes is not None:
-            delay_duration = minutes * 60
-
-    return {
-        "elapsed_time": time.time() - protocol_start_time,
-        "command_type": norm,
-        "volume": volume if volume is not None else "",
-        "location": location,
-        "seconds": delay_duration if norm == "delay" else (seconds if seconds is not None else ""),
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-    }
-
-
-# ---------------------------------------------------------------------------
-# Protocol status monitor
-# ---------------------------------------------------------------------------
-
-def monitor_protocol_status_threaded(
-    robot_ip: str,
-    run_id: str,
-    *,
-    stop_event: threading.Event | None = None,
-    result_dict: dict | None = None,
-    protocol_start_time: float | None = None,
-    max_wait_time: float = 600,
-    check_interval: float = 2,
-) -> None:
-    """
-    Poll OT-2 run status and collect protocol commands in a background thread.
-
-    Sets *stop_event* as soon as the run reaches a terminal state
-    (``succeeded``, ``failed``, or ``stopped``), which signals
-    ``monitor_balance_threaded`` to stop recording.
-
-    Args:
-        robot_ip:             IP address of the OT-2.
-        run_id:               Run ID returned by the runs API before ``play``.
-        stop_event:           Shared event — set when the run is terminal.
-        result_dict:          Updated in-place with ``protocol_status``,
-                              ``protocol_commands``, and ``protocol_complete``.
-        protocol_start_time:  ``time.time()`` recorded just before ``play``
-                              (used to timestamp each command).
-        max_wait_time:        Timeout in seconds before giving up. Default 600.
-        check_interval:       Seconds between status polls. Default 2.
-
-    Result keys written to *result_dict*:
-        ``protocol_status``   — final run status string.
-        ``protocol_commands`` — list of normalised command dicts.
-        ``protocol_complete`` — always ``True`` when the thread exits.
-        ``protocol_error``    — only present on unexpected exception.
-
-    Usage::
-
-        from balance_thread import monitor_balance_threaded, monitor_protocol_status_threaded
-
-        balance_stop = threading.Event()
-        balance_result, protocol_result = {}, {}
-
-        bt = threading.Thread(target=monitor_balance_threaded,
-                              kwargs=dict(driver=driver, sample_name=sample_name,
-                                          stop_event=balance_stop, max_duration=120,
-                                          result_dict=balance_result), daemon=True)
-
-        pt = threading.Thread(target=monitor_protocol_status_threaded,
-                              kwargs=dict(robot_ip=robot_ip, run_id=run_id,
-                                          stop_event=balance_stop,
-                                          protocol_start_time=time.time(),
-                                          result_dict=protocol_result), daemon=True)
-
-        bt.start()
-        pt.start()
-        ot2_client.play(run_id)
-
-        pt.join()
-        balance_stop.set()   # safety: ensure balance thread stops if pt already set it
-        bt.join()
-    """
-    if requests is None:
-        raise RuntimeError("requests library is required for monitor_protocol_status_threaded")
-
-    if result_dict is None:
-        result_dict = {}
-    if stop_event is None:
-        stop_event = threading.Event()
-    if protocol_start_time is None:
-        protocol_start_time = time.time()
-
-    base_url = f"http://{robot_ip}:31950"
-    headers = {"opentrons-version": "*"}
-    seen_ids: set[str] = set()
-    commands: list[dict] = []
-    last_status: str = ""
-    elapsed = 0.0
-
-    print(f"Protocol monitor started — run {run_id} on {robot_ip}")
-
-    try:
-        while elapsed < max_wait_time:
-            try:
-                resp = requests.get(f"{base_url}/runs/{run_id}", headers=headers, timeout=3)
-                if not resp.ok:
-                    print(f"  Protocol monitor: HTTP {resp.status_code} fetching run status")
-                    time.sleep(check_interval)
-                    elapsed += check_interval
-                    continue
-
-                run_data = resp.json().get("data", {})
-                status = run_data.get("status", "unknown")
-
-                if status != last_status:
-                    print(f"  Protocol status: {status}")
-                    last_status = status
-
-                # Collect new commands
-                cmd_resp = requests.get(f"{base_url}/runs/{run_id}/commands", headers=headers, timeout=3)
-                if cmd_resp.ok:
-                    for raw in cmd_resp.json().get("data", []):
-                        cid = raw.get("id", "")
-                        if cid in seen_ids:
-                            continue
-                        seen_ids.add(cid)
-                        record = _parse_command(raw, protocol_start_time)
-                        if record is None:
-                            continue
-                        commands.append(record)
-                        norm = record["command_type"]
-                        if norm in ("aspirate", "dispense"):
-                            vol = record["volume"]
-                            vol_str = f" {vol} uL" if vol != "" else ""
-                            print(f"  {norm.capitalize()}{vol_str} @ {record['location']}")
-                        elif norm == "delay":
-                            print(f"  Delay {record['seconds']} s")
-                        else:
-                            print(f"  {norm}")
-
-                if status in _TERMINAL_STATUSES:
-                    print(f"Protocol completed: {status} ({len(commands)} commands collected)")
-                    result_dict["protocol_status"] = status
-                    result_dict["protocol_commands"] = commands
-                    result_dict["protocol_complete"] = True
-                    stop_event.set()
-                    return
-
-            except requests.exceptions.RequestException as exc:
-                print(f"  Protocol monitor connection error: {exc}")
-
-            time.sleep(check_interval)
-            elapsed += check_interval
-
-        print(f"Protocol monitor: timeout after {max_wait_time} s")
-        result_dict["protocol_status"] = "timeout"
-        result_dict["protocol_commands"] = commands
-        result_dict["protocol_complete"] = True
-        stop_event.set()
-
-    except Exception as exc:
-        print(f"Protocol monitor error: {exc}")
-        result_dict["protocol_status"] = "error"
-        result_dict["protocol_commands"] = commands
-        result_dict["protocol_complete"] = True
-        result_dict["protocol_error"] = str(exc)
+        result_dict.update(protocol_status="error", protocol_complete=True,
+                           protocol_commands=commands, protocol_error=str(exc))
         stop_event.set()

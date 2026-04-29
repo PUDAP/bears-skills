@@ -190,8 +190,8 @@ balance_result, protocol_result = {}, {}
 protocol_start_time = time.time()
 
 bt = threading.Thread(target=monitor_balance_threaded,
-                      kwargs=dict(driver=driver, sample_name=sample_name,
-                                  stop_event=stop_event, max_duration=120,
+                      kwargs=dict(sample_name=sample_name,
+                                  stop_event=stop_event, max_duration=600,
                                   result_dict=balance_result), daemon=True)
 
 pt = threading.Thread(target=monitor_protocol_status_threaded,
@@ -273,7 +273,7 @@ reports/viscosity_raw_data/<sample>_iter<NNN>_<YYYYMMDD_HHMMSS>.csv
 
 During the run, two concurrent streams record:
 
-- **Balance readings at 4 Hz** via `monitor_balance_threaded` (`thread.py`): only fresh readings (`get_mass()["fresh"] == True`) are stored. Each row contains `time` (elapsed seconds from thread start), `mass_g`, `mass_mg` (`mass_g * 1000`), and `timestamp`. The thread writes a raw CSV to `reports/viscosity_raw_data/` automatically on stop.
+- **Balance readings at ~4 Hz** via `monitor_balance_threaded` (`thread.py`): subscribes to `puda.balance.tlm.pos` using `puda machine watch` and stores only fresh readings. Each row contains `time` (elapsed seconds from thread start), `mass_g`, `mass_mg`, and `timestamp`. The thread writes a raw CSV to `reports/viscosity_raw_data/` automatically on stop.
 - **OT-2 run status at 4 Hz**: record `ot2_command`, `ot2_status`, and protocol command timing in `ot2_commands`.
 
 After `t.join()`, retrieve outputs:
@@ -283,7 +283,7 @@ balance_readings = result["balance_readings"]   # list[dict] in memory
 csv_path         = result.get("csv_path")       # path of the written CSV
 ```
 
-Stale readings (`age >= 5 s`) are skipped automatically by the thread. If `balance_readings` is empty after the run, treat it as a failed data capture and do not proceed with error computation.
+Non-fresh readings (`fresh == False`) are skipped automatically by the thread. If `balance_readings` is empty after the run, treat it as a failed data capture and do not proceed with error computation.
 
 **Step 8 - Process data**
 
@@ -411,9 +411,9 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 - Balance edge service must be running before connecting.
 - Tare immediately after balance connection/startup and again before every transfer run.
 - **Never send `play` unless `get_mass()["fresh"] == True` and `age < 5 s`.** If the balance is not streaming, abort and fix the connection before retrying.
-- Start `monitor_balance_threaded` (from `thread.py`) in a background thread before sending `play`; stop and join the thread immediately after the run reaches a terminal state.
+- Start `monitor_balance_threaded` (from `thread.py`) in a background thread before sending `play`; it streams readings from `puda.balance.tlm.pos` via NATS and stops automatically when `stop_event` is set by the protocol thread.
 - If `balance_readings` is empty after a run (Opentrons-only capture), discard that run's result and re-run using the next tip, with the hard gate and thread active from the start.
-- Only use fresh balance readings; `monitor_balance_threaded` skips stale readings automatically. Convert `mass_g` to `mass_mg` when processing raw in-memory data.
+- Only fresh readings (`fresh == True` in `puda.balance.tlm.pos`) are stored; `monitor_balance_threaded` skips non-fresh messages automatically. Convert `mass_g` to `mass_mg` when processing raw in-memory data.
 - Pick up tips sequentially from `A1`, then `A2`, `A3`, `A4`, and continue row-major through the rack.
 - Never send `play` twice for the same run.
 - Do not process data, update the optimizer, or generate the next protocol unless the current run succeeded.
