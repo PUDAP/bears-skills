@@ -45,15 +45,16 @@ See [optimization.md](optimization.md) for implementation details.
 
 ## Workflow
 
-### Phase 0 - Run Lifecycle Safety
+### Phase 0 - Opentrons Run Lifecycle Safety
 
-This applies to the initial transfer and every optimization iteration.
+This applies only to Opentrons protocol execution for the initial transfer and every optimization iteration.
 
 Mandatory rules:
 - Never send `play` twice for the same run.
 - Each protocol execution must create and store a new `run_id`.
 - Always verify there is no active run and the robot is not in an error state before `play`.
 - Always poll until the run reaches a terminal state: `succeeded`, `failed`, or `stopped`.
+- The balance does not use this Opentrons run lifecycle. It only records readings concurrently while the Opentrons run is active.
 
 Hard gate condition:
 
@@ -116,7 +117,7 @@ The confirmation summary must include:
 - Custom labware JSON status, if applicable
 - PUDA project and experiment IDs
 
-Do not continue until the user confirms the setup.
+**Do not continue until the user confirms the setup.**
 
 **Step 2 - Balance and robot setup**
 
@@ -159,9 +160,11 @@ Execution sequence:
 1. Upload protocol.
 2. Create run and store `run_id`.
 3. Verify no active run and robot is not in error state.
-4. Start run with `play`.
-5. Poll until terminal.
-6. Proceed only if `run.status == "succeeded"`.
+4. Start balance recording at 4 readings/second.
+5. Start OT-2 run with `play`.
+6. Continue balance recording until the OT-2 run reaches a terminal state.
+7. Poll the OT-2 run until terminal.
+8. Proceed only if `run.status == "succeeded"`.
 
 During the seed run, collect balance data and OT-2 status concurrently as described in Phase 2. Process the seed data, compute error, record it as the seed observation, and initialize the optimizer with:
 
@@ -202,9 +205,11 @@ Execution sequence:
 2. Create run and store `run_id`.
 3. Verify no active run and robot is not in error state.
 4. Tare the balance with `driver.tare(wait=2.0)`.
-5. Start run with `play`.
-6. Poll until terminal.
-7. Proceed only if `run.status == "succeeded"`.
+5. Start balance recording at 4 readings/second.
+6. Start OT-2 run with `play`.
+7. Continue balance recording until the OT-2 run reaches a terminal state.
+8. Poll the OT-2 run until terminal.
+9. Proceed only if `run.status == "succeeded"`.
 
 Raw data is saved as:
 
@@ -215,7 +220,7 @@ reports/viscosity_raw_data/<sample>_iter<NNN>_<YYYYMMDD_HHMMSS>.csv
 **Step 7 - Collect concurrent data**
 
 During the run, two concurrent streams record:
-- Balance readings at **4 Hz**: read fresh `get_mass()["mass_g"]`, convert to `mass_mg = mass_g * 1000`, and record `mass_mg` with `timestamp`/`time`.
+- Balance readings at **4 Hz**: start when the OT-2 protocol run starts, read fresh `get_mass()["mass_g"]`, convert to `mass_mg = mass_g * 1000`, record `mass_mg` with `timestamp`/`time`, and stop when the OT-2 run reaches a terminal state.
 - OT-2 run status at **4 Hz**: record `ot2_command`, `ot2_status`, and protocol command timing.
 
 Only readings where `get_mass()["fresh"] == True` are valid. Discard stale readings with age >= 5 seconds.
@@ -345,6 +350,7 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 - Never add `load_labware` or `load_instrument` to `protocol_steps` if they are auto-injected by the local protocol builder.
 - Balance edge service must be running before connecting.
 - Tare immediately after balance connection/startup and again before every transfer run.
+- Start balance recording at 4 readings/second when the Opentrons protocol run starts, and stop recording when the Opentrons run reaches a terminal state.
 - Only use fresh balance readings and convert `mass_g` to `mass_mg`.
 - Pick up tips sequentially from `A1`, then `A2`, `A3`, `A4`, and continue row-major through the rack.
 - Never send `play` twice for the same run.

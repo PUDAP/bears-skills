@@ -21,7 +21,7 @@ Arduino-based USB mass balance connected via Linux USB serial (`/dev/ttyUSB0` or
 ### Prerequisites
 
 - Python 3.11+ and `uv`
-- Arduino balance connected at `/dev/ttyUSB2` or `/dev/ttyACM2`
+- Arduino balance connected at `/dev/ttyUSB3` or `/dev/ttyACM3`
 
 ### Environment
 
