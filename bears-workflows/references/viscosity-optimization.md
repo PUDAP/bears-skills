@@ -27,6 +27,7 @@ Load these before generating commands:
 - `../bears-machines/references/balance-machine.md`
 - `../scripts/optimizers.py`
 - `../scripts/balance_data_process.py`
+- `../scripts/thread.py`
 
 ## Optimization Approaches
 
@@ -54,7 +55,8 @@ Mandatory rules:
 - Each protocol execution must create and store a new `run_id`.
 - Always verify there is no active run and the robot is not in an error state before `play`.
 - Always poll until the run reaches a terminal state: `succeeded`, `failed`, or `stopped`.
-- The balance does not use this Opentrons run lifecycle. It only records readings concurrently while the Opentrons run is active.
+- **Before every `play`, confirm `get_mass()["fresh"] == True` and `age < 5 s`.** If the balance is not streaming fresh readings, abort — do not send `play`.
+- The balance records readings concurrently using `monitor_balance_threaded` from `thread.py`. The collection thread must be started before `play` is sent and stopped after the run reaches a terminal state.
 
 Hard gate condition:
 
@@ -92,10 +94,10 @@ Collect all values before starting. Do not generate or execute any protocol unti
 | Pipette type | Opentrons pipette model |
 | Pipette mount | `left` or `right` |
 | Balance serial port | Linux serial path, e.g. `/dev/ttyUSB0` |
-| PUDA project ID | Required for `puda-report` |
-| PUDA experiment ID | Required for `puda-report` |
 
-If the source or destination labware is custom, ask for the custom labware JSON definition and include that JSON in the generated Opentrons protocol. Do not generate the protocol with only the custom labware name.
+**Critical**
+`mass_balance_vial_30000` and `mass_balance_vial_50000` are custom labware.
+- These are automatically loaded via `protocol.load_labware_from_definition()` — the definition is embedded inline in the generated protocol code. No separate upload step is needed.
 
 If `llm` is selected, required credentials such as `OPENROUTER_API_KEY` must already be configured in the local environment. Never ask the user to paste secrets into chat.
 
@@ -104,18 +106,23 @@ If `llm` is selected, required credentials such as `OPENROUTER_API_KEY` must alr
 Present a setup summary and ask for explicit confirmation before generating the seed protocol.
 
 The confirmation summary must include:
-- Sample name
-- Initial aspiration volume
-- Target volume
-- Optimization approach
-- Measurement phase and outlier threshold
-- Max iterations and error threshold
-- Source and destination labware, slots, and wells
-- Pipette type and mount
-- Balance serial port
-- Tip order rule
-- Custom labware JSON status, if applicable
-- PUDA project and experiment IDs
+Sample name
+Initial aspiration volume 
+Target volume 
+Optimization approach
+If LLM: OpenRouter model ID 
+Measurement phase 
+Outlier threshold
+Max iterations 
+Error threshold 
+Source labware
+Source slot and well
+Destination labware 
+Destination slot and well 
+Pipette type 
+Pipette mount
+Balance serial port 
+
 
 **Do not continue until the user confirms the setup.**
 
@@ -160,11 +167,58 @@ Execution sequence:
 1. Upload protocol.
 2. Create run and store `run_id`.
 3. Verify no active run and robot is not in error state.
-4. Start balance recording at 4 readings/second.
-5. Start OT-2 run with `play`.
-6. Continue balance recording until the OT-2 run reaches a terminal state.
-7. Poll the OT-2 run until terminal.
-8. Proceed only if `run.status == "succeeded"`.
+4. **Hard gate — confirm balance is streaming before play:**
+
+```python
+m = driver.get_mass()
+if not m.get("fresh") or m.get("age", 999) >= 5:
+    raise RuntimeError(
+        "Balance is not streaming fresh readings. "
+        "Check /dev/ttyUSB* connection and edge service before sending play."
+    )
+```
+
+5. Tare with `driver.tare(wait=2.0)`.
+6. Start both threads using `thread.py` — the protocol thread sets `stop_event` automatically when the run is terminal, which stops the balance thread:
+
+```python
+import threading, time
+from thread import monitor_balance_threaded, monitor_protocol_status_threaded
+
+stop_event = threading.Event()
+balance_result, protocol_result = {}, {}
+protocol_start_time = time.time()
+
+bt = threading.Thread(target=monitor_balance_threaded,
+                      kwargs=dict(driver=driver, sample_name=sample_name,
+                                  stop_event=stop_event, max_duration=120,
+                                  result_dict=balance_result), daemon=True)
+
+pt = threading.Thread(target=monitor_protocol_status_threaded,
+                      kwargs=dict(robot_ip=robot_ip, run_id=run_id,
+                                  stop_event=stop_event,
+                                  protocol_start_time=protocol_start_time,
+                                  result_dict=protocol_result), daemon=True)
+
+bt.start()
+pt.start()
+```
+
+7. Start OT-2 run with `play`.
+8. Wait for both threads to finish:
+
+```python
+pt.join()
+stop_event.set()   # safety in case protocol thread already set it
+bt.join()
+balance_readings = balance_result["balance_readings"]
+csv_path         = balance_result.get("csv_path")
+ot2_commands     = protocol_result.get("protocol_commands", [])
+```
+
+10. Proceed only if `run.status == "succeeded"`.
+
+**Recovery — if a run completed without balance data:** `balance_readings` will be empty. Do not compute an error from that run. Re-run the seed protocol from step 1 using the next tip in sequence, ensuring the hard gate passes and the thread is started before `play`.
 
 During the seed run, collect balance data and OT-2 status concurrently as described in Phase 2. Process the seed data, compute error, record it as the seed observation, and initialize the optimizer with:
 
@@ -204,12 +258,10 @@ Execution sequence:
 1. Upload protocol.
 2. Create run and store `run_id`.
 3. Verify no active run and robot is not in error state.
-4. Tare the balance with `driver.tare(wait=2.0)`.
-5. Start balance recording at 4 readings/second.
-6. Start OT-2 run with `play`.
-7. Continue balance recording until the OT-2 run reaches a terminal state.
-8. Poll the OT-2 run until terminal.
-9. Proceed only if `run.status == "succeeded"`.
+4. Start both `monitor_balance_threaded` and `monitor_protocol_status_threaded` threads (same pattern as Step 4 seed run). The protocol thread sets `stop_event` when the run is terminal.
+5. Start OT-2 run with `play`.
+6. `pt.join()` → `stop_event.set()` → `bt.join()` to collect results.
+7. Proceed only if `protocol_result["protocol_status"] == "succeeded"`.
 
 Raw data is saved as:
 
@@ -220,10 +272,18 @@ reports/viscosity_raw_data/<sample>_iter<NNN>_<YYYYMMDD_HHMMSS>.csv
 **Step 7 - Collect concurrent data**
 
 During the run, two concurrent streams record:
-- Balance readings at **4 Hz**: start when the OT-2 protocol run starts, read fresh `get_mass()["mass_g"]`, convert to `mass_mg = mass_g * 1000`, record `mass_mg` with `timestamp`/`time`, and stop when the OT-2 run reaches a terminal state.
-- OT-2 run status at **4 Hz**: record `ot2_command`, `ot2_status`, and protocol command timing.
 
-Only readings where `get_mass()["fresh"] == True` are valid. Discard stale readings with age >= 5 seconds.
+- **Balance readings at 4 Hz** via `monitor_balance_threaded` (`thread.py`): only fresh readings (`get_mass()["fresh"] == True`) are stored. Each row contains `time` (elapsed seconds from thread start), `mass_g`, `mass_mg` (`mass_g * 1000`), and `timestamp`. The thread writes a raw CSV to `reports/viscosity_raw_data/` automatically on stop.
+- **OT-2 run status at 4 Hz**: record `ot2_command`, `ot2_status`, and protocol command timing in `ot2_commands`.
+
+After `t.join()`, retrieve outputs:
+
+```python
+balance_readings = result["balance_readings"]   # list[dict] in memory
+csv_path         = result.get("csv_path")       # path of the written CSV
+```
+
+Stale readings (`age >= 5 s`) are skipped automatically by the thread. If `balance_readings` is empty after the run, treat it as a failed data capture and do not proceed with error computation.
 
 **Step 8 - Process data**
 
@@ -350,8 +410,10 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 - Never add `load_labware` or `load_instrument` to `protocol_steps` if they are auto-injected by the local protocol builder.
 - Balance edge service must be running before connecting.
 - Tare immediately after balance connection/startup and again before every transfer run.
-- Start balance recording at 4 readings/second when the Opentrons protocol run starts, and stop recording when the Opentrons run reaches a terminal state.
-- Only use fresh balance readings and convert `mass_g` to `mass_mg`.
+- **Never send `play` unless `get_mass()["fresh"] == True` and `age < 5 s`.** If the balance is not streaming, abort and fix the connection before retrying.
+- Start `monitor_balance_threaded` (from `thread.py`) in a background thread before sending `play`; stop and join the thread immediately after the run reaches a terminal state.
+- If `balance_readings` is empty after a run (Opentrons-only capture), discard that run's result and re-run using the next tip, with the hard gate and thread active from the start.
+- Only use fresh balance readings; `monitor_balance_threaded` skips stale readings automatically. Convert `mass_g` to `mass_mg` when processing raw in-memory data.
 - Pick up tips sequentially from `A1`, then `A2`, `A3`, `A4`, and continue row-major through the rack.
 - Never send `play` twice for the same run.
 - Do not process data, update the optimizer, or generate the next protocol unless the current run succeeded.
