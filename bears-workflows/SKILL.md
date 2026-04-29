@@ -50,22 +50,22 @@ Before running:
 
 ### Viscosity Optimization (`viscosity-optimization`)
 
-Use for **iterative tuning of Opentrons OT-2 liquid handling parameters for viscous fluids using gravimetric feedback**.
+Use for **iterative tuning of Opentrons OT-2 aspiration volume for viscous fluids using gravimetric feedback**.
 
 Capabilities:
 - Automated protocol generation and execution on Opentrons OT-2
 - Concurrent gravimetric data collection from a mass balance (4 Hz) during each run
 - Automatic data processing: outlier removal, phase slicing, normalisation
 - Transfer error calculation (signed and absolute, in µL)
-- Bayesian Optimization (LCB or EI) or LLM-driven suggestion of next protocol parameters
-- Optimizable parameters: flow rates, delays, aspirate/dispense offsets
-- Per-iteration report generation (params, signed error, absolute error)
+- Bayesian Optimization (LCB or EO) or LLM-driven suggestion of next aspiration volume
+- Optimized variable: aspiration volume, tuned so dispensed volume is as close as possible to target volume
+- Per-iteration report generation (aspiration volume, signed error, absolute error)
 
 Use this experiment when:
 - The user wants to improve pipetting accuracy for viscous or non-water liquids
-- The task involves tuning flow rate, delay, or offset parameters to minimize transfer error
+- The task involves tuning aspiration volume to minimize transfer error against a target dispensed volume
 - The user mentions gravimetric calibration, balance feedback, or viscosity optimization
-- The user mentions BO, LCB, EI, or LLM-guided pipetting parameter optimization
+- The user mentions BO, LCB, EO, or LLM-guided aspiration-volume optimization
 
 Before running:
 - Refer to: [viscosity-optimization](references/viscosity-optimization.md)

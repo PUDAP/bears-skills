@@ -8,17 +8,16 @@ Colour mixing:
     SOCM_LLM — LLM (single objective: RMSE)
     LLMOptimizer     — alias for SOCM_LLM
 
-Viscosity — single-objective (SOBO), box-bounded parameters:
-    ViscositySOBOOptimizerBase — abstract base: one minimised scalar (e.g. abs error)
-    ViscositySOBOOptimizerEI   — LogEI
-    ViscositySOBOOptimizerLCB  — UpperConfidenceBound with maximize=False on absolute error
+Viscosity — single-objective (SOVH), box-bounded parameters:
+    SOVH_BO  — abstract base: one minimised scalar (e.g. abs error)
+    SOVH_EO  — LogEI
+    SOVH_LCB — UpperConfidenceBound with maximize=False on absolute error
 
-Aliases: ViscosityBOOptimizer* → ViscositySOBOOptimizer* (backward compatible).
+Aliases: ViscosityBOOptimizer* → SOVH_* (backward compatible).
 
 Viscosity — LLM:
-    ViscosityLLMSingleObjectiveOptimizer — one scalar goal (e.g. abs error); volume mode or generic params
-    ViscosityLLMMultiObjectiveOptimizer — ≥2 objectives per iteration (trade-offs, Pareto-style reasoning)
-    ViscosityLLMOptimizer — alias for ViscosityLLMSingleObjectiveOptimizer
+    SOVH_LLM — one scalar goal (e.g. abs error); volume mode or generic params
+    ViscosityLLMOptimizer — alias for SOVH_LLM
 
 Dependencies:
     pip install botorch gpytorch torch openai
@@ -576,17 +575,17 @@ LLMOptimizer = SOCM_LLM
 
 
 # ---------------------------------------------------------------------------
-# Viscosity optimization — single-objective Bayesian (SOBO)
+# Viscosity optimization — single-objective Bayesian (SOVH)
 # ---------------------------------------------------------------------------
 
-class ViscositySOBOOptimizerBase(ABC):
+class SOVH_BO(ABC):
     """
     Single-objective Bayesian Optimization for viscosity / transfer tuning:
     minimise **absolute** transfer error (µL) over box-bounded protocol parameters.
 
     Observations use **signed error** ``actual − target`` (µL). The GP surrogate
-    target depends on the subclass (see :class:`ViscositySOBOOptimizerEI` and
-    :class:`ViscositySOBOOptimizerLCB`).
+    target depends on the subclass (see :class:`SOVH_EO` and
+    :class:`SOVH_LCB`).
 
     Each parameter is mapped linearly to ``[0, 1]``.
 
@@ -605,7 +604,7 @@ class ViscositySOBOOptimizerBase(ABC):
     ) -> None:
         if not _BO_AVAILABLE:
             raise ImportError(
-                "Viscosity SOBO optimizers require torch, botorch, and gpytorch. "
+                "SOVH optimizers require torch, botorch, and gpytorch. "
                 "Install with: pip install botorch gpytorch torch"
             )
         if not param_bounds:
@@ -715,10 +714,10 @@ class ViscositySOBOOptimizerBase(ABC):
 
     @abstractmethod
     def _build_acquisition(self, model: SingleTaskGP, train_Y: torch.Tensor):
-        """Build the acquisition function for this viscosity SOBO variant."""
+        """Build the acquisition function for this SOVH variant."""
 
 
-class ViscositySOBOOptimizerEI(ViscositySOBOOptimizerBase):
+class SOVH_EO(SOVH_BO):
     """
     Viscosity single-objective BO using Expected Improvement (LogEI).
 
@@ -726,7 +725,7 @@ class ViscositySOBOOptimizerEI(ViscositySOBOOptimizerBase):
     signed error is near zero — equivalent to reducing absolute transfer error.
 
     Example:
-        opt = ViscositySOBOOptimizerEI(
+        opt = SOVH_EO(
             [("aspirate_rate", 10.0, 150.0), ("dispense_rate", 10.0, 150.0)],
         )
         opt.observe({"aspirate_rate": 50.0, "dispense_rate": 50.0}, signed_error_ul=3.0)
@@ -742,7 +741,7 @@ class ViscositySOBOOptimizerEI(ViscositySOBOOptimizerBase):
         return LogExpectedImprovement(model=model, best_f=train_Y.max())
 
 
-class ViscositySOBOOptimizerLCB(ViscositySOBOOptimizerBase):
+class SOVH_LCB(SOVH_BO):
     """
     Viscosity single-objective BO using ``UpperConfidenceBound`` with
     ``maximize=False`` to **minimise absolute transfer error** (µL).
@@ -753,7 +752,7 @@ class ViscositySOBOOptimizerLCB(ViscositySOBOOptimizerBase):
     ``absolute_error_ul`` override if you measure abs directly).
 
     Args:
-        param_bounds: Same as :class:`ViscositySOBOOptimizerBase`.
+        param_bounds: Same as :class:`SOVH_BO`.
         beta: UCB exploration weight (variance term). Default: 1.0.
         num_restarts: Restarts for acquisition optimisation.
         raw_samples: Raw samples for initialisation.
@@ -778,17 +777,17 @@ class ViscositySOBOOptimizerLCB(ViscositySOBOOptimizerBase):
         return UpperConfidenceBound(model=model, beta=self.beta, maximize=False)
 
 
-# Backward-compatible aliases (SOBO)
-ViscosityBOOptimizerBase = ViscositySOBOOptimizerBase
-ViscosityBOOptimizerEI = ViscositySOBOOptimizerEI
-ViscosityBOOptimizerLCB = ViscositySOBOOptimizerLCB
+# Backward-compatible aliases (SOVH)
+ViscosityBOOptimizerBase = SOVH_BO
+ViscosityBOOptimizerEI = SOVH_EO
+ViscosityBOOptimizerLCB = SOVH_LCB
 
 
 # ---------------------------------------------------------------------------
 # Viscosity optimization — LLM (single objective)
 # ---------------------------------------------------------------------------
 
-class ViscosityLLMSingleObjectiveOptimizer:
+class SOVH_LLM:
     """
     Single-objective LLM optimizer for viscosity / transfer tuning via OpenRouter.
     Minimise one scalar score (e.g. absolute transfer error), optionally using the
@@ -815,7 +814,7 @@ class ViscosityLLMSingleObjectiveOptimizer:
             ``\"50 µL/s\"`` or ``\"default\"``. Shown as fixed while volume varies.
 
     Example (volume-only):
-        opt = ViscosityLLMSingleObjectiveOptimizer(
+        opt = SOVH_LLM(
             model=OPENROUTER_MODELS["gpt-4o"],
             param_bounds=[("volume", 10.0, 200.0)],
             target_volume_ul=100.0,
@@ -1148,4 +1147,7 @@ class ViscosityLLMSingleObjectiveOptimizer:
                 )
             out[name] = min(hi, max(lo, v))
         return out
+
+
+ViscosityLLMOptimizer = SOVH_LLM
 

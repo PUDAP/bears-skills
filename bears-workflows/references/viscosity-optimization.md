@@ -1,23 +1,29 @@
 ---
 name: viscosity-optimization
-description: Optimize liquid handling parameters (flow rate, delay, offset) for viscous fluids on an Opentrons OT-2 using gravimetric feedback from a PUDAP Arduino-based mass balance (Linux serial), driven by Bayesian Optimization (LCB or EI) or an LLM via OpenRouter.
+description: Optimize aspiration volume for viscous fluids on an Opentrons OT-2 so the dispensed volume is as close as possible to the target volume, using gravimetric feedback from a PUDA balance machine (Linux serial), driven by Bayesian Optimization (LCB or EO) or an LLM via OpenRouter.
 ---
 
 # Viscosity Optimization
 
-Iteratively tune Opentrons OT-2 protocol parameters to minimize the transfer error (µL) for viscous liquids, using real-time gravimetric feedback from an Arduino-based mass balance and BO or LLM optimization.
+Iteratively tune the Opentrons OT-2 aspiration volume to minimize dispense-volume error (µL) for viscous liquids, using real-time gravimetric feedback from the PUDA balance machine and BO or LLM optimization.
 
 ## Required Skills
 
 Invoke these skills before generating any commands:
-- **puda-machines** → opentrons machine (liquid handling commands, labware)
+- **puda-machines** → opentrons machine (liquid handling commands, labware) and balance machine (gravimetric mass readings)
 - **puda-protocol** → protocol generation and execution
 - **puda-memory** → update `experiment.md` after every protocol creation and run
 
 ## Required Hardware
 
 - **Opentrons OT-2** — reachable on local network (confirm IP before starting)
-- **Arduino-based mass balance** — connected via Linux USB serial (`/dev/ttyUSB0` or `/dev/ttyACM0`)
+- **PUDA balance machine** — Arduino-based mass balance connected via Linux USB serial (`/dev/ttyUSB0` or `/dev/ttyACM0`)
+
+## Required Machine References
+
+Load these references before generating commands:
+- `../bears-machines/references/opentrons-machine.md`
+- `../bears-machines/references/balance-machine.md`
 
 ## Optimization Approaches
 
@@ -25,10 +31,9 @@ Ask the user which approach to use if not specified:
 
 | Approach | Class | When to use |
 |---|---|---|
-| **Bayesian LCB (SO)** | `ViscositySOBOOptimizerLCB` | Good default; one scalar objective (e.g. abs error) |
-| **Bayesian EI (SO)** | `ViscositySOBOOptimizerEI` | Noisy observations or tight iteration budget |
-| **LLM (single objective)** | `ViscosityLLMSingleObjectiveOptimizer` (alias `ViscosityLLMOptimizer`) | One primary metric; volume-tuning prompt when optimising `volume` alone |
-| **LLM (multi-objective)** | `ViscosityLLMMultiObjectiveOptimizer` | Several competing objectives per iteration; trade-offs in prompt |
+| **Bayesian LCB (SO)** | `SOVH_LCB` | Good default; one scalar objective (e.g. abs error) |
+| **Bayesian EO (SO)** | `SOVH_EO` | Noisy observations or tight iteration budget |
+| **LLM (single objective)** | `SOVH_LLM` (alias `ViscosityLLMOptimizer`) | Optimize aspiration volume toward the target dispensed volume |
 ---
 
 ## Workflow
@@ -43,7 +48,7 @@ Collect all of the following before starting. Do not proceed until every value i
 
 | Input | Options |
 |---|---|
-| Optimization approach | `bayes_lcb`, `bayes_ei`, or `llm` |
+| Optimization approach | `bayes_lcb`, `bayes_eo`, or `llm` |
 | If LLM: OpenRouter model ID | e.g. `"openai/gpt-4o"` |
 
 If `llm` is selected, any required credential such as `OPENROUTER_API_KEY` must already be configured in the local environment outside the chat before running the workflow. Do not ask the user to paste the API key into chat.
@@ -55,7 +60,6 @@ If `llm` is selected, any required credential such as `OPENROUTER_API_KEY` must 
 | Sample name | String identifier (e.g. `"glycerol_50pct"`) |
 | Initial volume | µL used in each protocol run |
 | Target volume | µL expected to actually transfer |
-| Liquid density | g/mL (use `1.0` for water) |
 
 **c) Measurement**
 
@@ -81,29 +85,26 @@ For the pipette:
 
 **f) Protocol steps**
 
-Ordered list of Opentrons commands. Any string parameter value that exactly matches a search parameter name is substituted with the optimizer's suggested float at runtime.
+Ordered list of Opentrons commands. The aspirate command volume is substituted with the optimizer's suggested `aspiration_volume` at runtime. Keep other protocol settings fixed unless the user explicitly changes the workflow outside the optimization loop.
 
-Common optimizable parameter names:
+Single optimized variable:
 
 | Name | Effect |
 |---|---|
-| `aspirate_rate` | Aspirate flow rate (µL/s) |
-| `dispense_rate` | Dispense flow rate (µL/s) |
-| `blow_out_rate` | Blow-out flow rate (µL/s) |
-| `aspirate_offset` | Aspirate height from well bottom (mm) |
-| `dispense_offset` | Dispense height from well bottom (mm) |
-| `delay_seconds` | Delay duration (s) |
+| `aspiration_volume` | Volume aspirated by the pipette (µL); optimized so the dispensed volume is as close as possible to `target_volume` |
 
-**g) Search space** — for each parameter to optimize:
-- Name (must match string used in protocol steps), min value, max value, initial value
-
-**h) Balance serial port** — confirm with user:
+**g) Balance serial port** — confirm with user:
 - Linux device path, e.g. `/dev/ttyUSB0` or `/dev/ttyACM0`
 - Run `ls /dev/tty{USB,ACM}*` to discover available ports
 
+**h) Reporting identifiers** — required for `puda-report`:
+- PUDA `project_id`
+- PUDA `experiment_id`
+- Report output directory
+
 **Step 2 — Hardware connection**
 
-Confirm the OT-2 IP and balance serial port from the user. Start the balance edge service, then connect:
+Confirm the OT-2 IP and balance serial port from the user. Start the PUDA balance machine edge service, then connect:
 
 ```bash
 uv run --package balance-edge python edge/balance.py
@@ -118,6 +119,8 @@ exp = ViscosityOptimizationExperiment(
 exp.connect()   # raises immediately if OT-2 or balance is unreachable
 ```
 
+The balance machine must be started before readings are collected, tared before each transfer measurement, checked for `fresh == True` before any mass value is used, and shut down cleanly at completion.
+
 ---
 
 ### Phase 2 — Per-Iteration Loop
@@ -130,7 +133,7 @@ Build the protocol with current optimizer-suggested parameter values and execute
 
 During the run, two concurrent threads record:
 - Balance readings at **4 Hz** — reads `get_mass()["mass_g"]` with `timestamp`
-- OT-2 run status at **2 Hz** — `ot2_command`, `ot2_status`
+- OT-2 run status at **4 Hz** — `ot2_command`, `ot2_status`
 
 Only readings where `get_mass()["fresh"] == True` (age < 5 s) are considered valid.
 
@@ -156,24 +159,25 @@ data/viscosity_processed_data/<same filename>.csv
 **Step 6 — Compute transfer error**
 
 ```
-measured_vol_µL = (final_weight_g / liquid_density) × 1000
+measured_vol_µL = final processed balance-derived volume in µL
 signed_error    = measured_vol_µL − target_volume_µL
 absolute_error  = |signed_error|
 ```
 
 Positive signed error = over-transfer. Negative = under-transfer.
+The single objective is to minimize `absolute_error` by adjusting only `aspiration_volume`.
 
 **Step 7 — Update optimizer**
 
-For Bayesian SOBO in [`scripts/optimizers.py`](../scripts/optimizers.py), call ``observe(params, signed_error_ul, absolute_error_ul=...)`` (``absolute_error_ul`` defaults to ``|signed_error_ul|``). The surrogate uses signed error (EI: fit on ``-(signed_error_ul²)`` toward zero error; LCB: fit on absolute error with ``UpperConfidenceBound(..., maximize=False)``).
+For Bayesian SOVH in [`scripts/optimizers.py`](../scripts/optimizers.py), call ``observe({"aspiration_volume": value}, signed_error_ul, absolute_error_ul=...)`` (``absolute_error_ul`` defaults to ``|signed_error_ul|``). The surrogate uses signed error (EO: fit on ``-(signed_error_ul²)`` toward zero error; LCB: fit on absolute error with ``UpperConfidenceBound(..., maximize=False)``).
 
 **Step 8 — Save iteration report**
 
-Append one row/block to the report file after every iteration.
+Append one row/block to the report file after every iteration. This is the live optimization log; final experiment reporting is handled through **puda-report** after the run.
 
 For Bayesian: `data/viscosity_report/report_<sample>.csv`
 ```
-iteration, timestamp, approach, signed_error_ul, abs_error_ul, <param1>, <param2>, ...
+iteration, timestamp, approach, aspiration_volume_ul, measured_volume_ul, target_volume_ul, signed_error_ul, abs_error_ul
 ```
 
 For LLM: `data/viscosity_report/report_<sample>.txt`
@@ -193,9 +197,9 @@ Stop when **either** is met:
 | `absolute_error ≤ error_threshold` | Transfer accuracy within acceptable tolerance |
 | `iteration ≥ max_iterations` | Maximum iterations reached |
 
-**Step 10 — Suggest next parameters**
+**Step 10 — Suggest next aspiration volume**
 
-Call `.suggest()` on the optimizer to get the next `{param_name: float}` dict. Use these values to generate the next protocol. Repeat from Step 3.
+Call `.suggest()` on the optimizer to get the next `{"aspiration_volume": float}` dict. Use the suggested `aspiration_volume` as the aspirate volume in the next protocol. Repeat from Step 3.
 
 ---
 
@@ -203,9 +207,18 @@ Call `.suggest()` on the optimizer to get the next `{param_name: float}` dict. U
 
 On stop:
 - Call `driver.shutdown()` to close the serial port cleanly
-- Log the best parameters and best absolute error
+- Log the best aspiration volume and best absolute error
 - Save a final summary to `logs/`
+- Invoke **puda-report** to extract experiment data, hash the data used in the report, and generate the final experiment report
 - Invoke **puda-memory** to update `experiment.md`
+
+**Step 11 — Generate PUDA report**
+
+Use the confirmed `project_id` and `experiment_id` with **puda-report**:
+1. Extract all data related to the project with `puda project extract`.
+2. Use `puda db schema` to identify the experiment tables/fields required for the report.
+3. Hash the extracted experiment data used for analysis and include the hash in the report for provenance.
+4. Report the best aspiration volume, signed/absolute error trend, raw/processed data paths, optimizer approach, and stop condition.
 
 ---
 
@@ -214,7 +227,7 @@ On stop:
 ```python
 from experiments.viscosity_optimization import (
     ViscosityOptimizationExperiment, ExperimentConfig,
-    LabwareConfig, ProtocolStep, SearchParam,
+    LabwareConfig, ProtocolStep,
 )
 
 exp = ViscosityOptimizationExperiment(
@@ -234,12 +247,14 @@ exp.run()
 | `data/viscosity_raw_data/` | Raw CSVs from each run |
 | `data/viscosity_processed_data/` | Processed, normalised CSVs |
 | `data/viscosity_report/` | Per-sample reports (`.csv` Bayesian / `.txt` LLM) |
+| `reports/` | Final PUDA report artifacts generated with `puda-report` |
 
 ---
 
 ## Rules
 
 - Always confirm OT-2 IP and balance serial port (`/dev/ttyUSB*` or `/dev/ttyACM*`) **before** generating any protocol.
+- Always load both the opentrons and balance machine references from **puda-machines** before generating commands for this workflow.
 - Never add `load_labware` or `load_instrument` to `protocol_steps` — they are auto-injected.
 - Balance edge service (`uv run --package balance-edge python edge/balance.py`) **must be running** before connecting.
 - Never ask the user to paste API keys, tokens, passwords, or other secrets into chat.
@@ -249,5 +264,6 @@ exp.run()
 - Call `driver.tare(wait=2.0)` at the start of each iteration before running the protocol.
 - Call `driver.shutdown()` after all iterations are complete to close the serial port cleanly.
 - Protocol must always end with no tip attached (Opentrons sequencing rule).
+- Invoke **puda-report** at completion to extract, hash, and report the experiment data.
 - Invoke **puda-memory** after every protocol creation and run.
 - **If unsure about any input, parameter, or decision — ask the user. Do not assume.**
