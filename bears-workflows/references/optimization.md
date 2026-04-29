@@ -67,6 +67,7 @@ Ask the user which model to use before initializing. Do not assume a default.
 | `claude-sonnet-4-5` | `anthropic/claude-sonnet-4-5` |
 | `claude-sonnet-4.6` | `anthropic/claude-sonnet-4.6` |
 | `claude-opus-4` | `anthropic/claude-opus-4` |
+| `claude-opus-4.7` | `anthropic/claude-opus-4.7` |
 | `gemini-3.1-pro-preview` | `google/gemini-3.1-pro-preview` |
 | `gemini-2.5-pro` | `google/gemini-2.5-pro-preview` |
 | `llama-4-maverick` | `meta-llama/llama-4-maverick` |
@@ -79,8 +80,6 @@ Ask the user which model to use before initializing. Do not assume a default.
 | `glm-4.6` | `z-ai/glm-4.6` |
 | `kimi-k2.5` | `moonshotai/kimi-k2.5` |
 | `kimi-k2-0905` | `moonshotai/kimi-k2-0905` |
-
-Requested-model note: `claude-opus-4.7` was requested, but it is not currently listed on OpenRouter in the provider pages referenced by this workflow. Do not assume it is available unless OpenRouter exposes an official identifier for it.
 
 **Usage**:
 ```python
