@@ -1,36 +1,104 @@
-# bears-skills
+# BEARS Skills
 
-Cursor/agent skill references for PUDA work at bears.
+A local repository of PUDA skills for BEARS machine operation and experiment workflows.
 
-This repository contains local skill documentation for selecting machines, choosing experiment workflows, and loading the right reference material before generating commands or protocols.
+## Overview
 
-## Skill Folders
+This repository contains skills for PUDA work at BEARS, following the [Agent Skills](https://agentskills.io) standard. Each skill lives in its own directory with a required `SKILL.md` and optional `references/`, `scripts/`, or `assets/`.
 
-### [`bears-machines`](bears-machines/SKILL.md)
+These skills help agents select the correct PUDA-connected machine, load the right machine reference, choose the correct experiment workflow, and ask for required inputs before generating commands, protocols, reports, or experiment logs.
 
-Use this skill to choose the correct PUDA-connected machine and load its command reference before generating machine commands.
+## Skill Modules
 
-Covered machines include:
-- `first` for liquid handling and deck operations
-- `biologic` for electrochemical measurements such as OCV, CA, EIS, CV, and MPP
-- `balance` for Arduino-based gravimetric mass measurement
-- `opentrons` for OT-2 liquid handling, protocol generation, labware setup, and camera capture
+| Skill | Description |
+|-------|-------------|
+| **bears-machines** | PUDA machines skill for machines at BEARS. Use when selecting a BEARS machine, checking capabilities, loading machine references, or generating machine/protocol commands. |
+| **bears-workflows** | PUDA workflow skill for BEARS experiments. Use when selecting, setting up, or running experiment workflows such as colour mixing optimization or viscosity optimization. |
 
-### [`bears-workflows`](bears-workflows/README.md)
+## BEARS Machine Skills
 
-Use this skill to choose and run PUDA experiment workflows at bears.
+The `bears-machines` skill covers PUDA-connected machines available at BEARS.
 
-Covered workflows include:
-- `colour-mixing-opt` for RGB dye mixing optimization using OT-2 dispensing, camera feedback, image processing, RMSE scoring, and BO or LLM suggestions
-- `viscosity-optimization` for tuning OT-2 liquid handling parameters with gravimetric balance feedback and BO or LLM suggestions
+| Machine | Machine ID | Description |
+|---------|------------|-------------|
+| **First Machine** | `first` | Liquid handling and deck operations, including aspirate, dispense, attach tip, drop tip, and sequenced wet-lab protocol steps. |
+| **Biologic Machine** | `biologic` | Electrochemical testing and characterization, including OCV, CA, PEIS, GEIS, CV, and MPP variants. |
+| **Balance Machine** | `balance` | Gravimetric mass measurement using an Arduino-based USB load-cell balance on Linux, with tare, freshness checks, and NATS telemetry. |
+| **Opentrons Machine** | `opentrons` | OT-2 liquid handling and protocol generation, including labware setup, pipetting, flow control, CSV-driven loops, and camera capture. |
 
-## How To Use
+Before command generation, load [`bears-machines/SKILL.md`](bears-machines/SKILL.md), read the matching reference in [`bears-machines/references/`](bears-machines/references/), and run `puda machine commands <machine_id>` when command details are needed.
 
-1. Identify whether the user needs machine-level command guidance or an experiment workflow.
-2. Load the matching skill folder.
-3. Read the linked reference file before generating commands, protocols, or reports.
-4. Ask for required user inputs before execution.
-5. Ask for clarification whenever the machine, workflow, hardware setup, deck slots, or optimization approach is unclear.
+## BEARS Workflows
+
+The `bears-workflows` skill covers PUDA experiment workflows used at BEARS.
+
+| Workflow | Description |
+|----------|-------------|
+| **colour-mixing-opt** | Iterative RGB dye mixing optimization using OT-2 dispensing, camera feedback, image processing, RMSE scoring, and Bayesian Optimization or LLM suggestions. |
+| **viscosity-optimization** | Iterative tuning of OT-2 liquid handling parameters for viscous fluids using PUDA balance machine feedback, transfer-error calculation, Bayesian Optimization or LLM suggestions, and final `puda-report` reporting. |
+
+Before running a workflow, load [`bears-workflows/SKILL.md`](bears-workflows/SKILL.md), read the matching reference in [`bears-workflows/references/`](bears-workflows/references/), confirm all required hardware and experiment inputs, and invoke `puda-memory` after protocol creation or execution.
+
+## CLI Reference
+
+Common PUDA CLI commands used by these skills:
+
+```bash
+puda
++-- protocol
+|   +-- run                  Run a protocol on machines via NATS
+|   +-- validate             Validate a protocol JSON file
++-- machine
+|   +-- list                 Discover machines via heartbeat
+|   +-- state <machine_id>   Get the state of a machine
+|   +-- reset <machine_id>   Reset a machine
+|   +-- commands <machine_id> Show available commands
++-- init [path]              Initialize a new PUDA project
++-- skills
+|   +-- install              Install agent skills
+|   +-- update               Update agent skills
++-- db
+    +-- exec [sql]           Execute SQL queries on the database
+    +-- schema               Display the database schema
+```
+
+## Installing Skills With The PUDA CLI
+
+Run these from a PUDA project directory after `puda init` if you are starting fresh.
+
+**Install** - first-time setup or full sync from the configured skill source:
+
+```bash
+puda skills install
+```
+
+**Update** - refresh skills when upstream or local skill definitions change:
+
+```bash
+puda skills update
+```
+
+## Developing And Testing Skills
+
+To try skills from a branch or local checkout before they land on the main skill source, use the skills CLI.
+
+**GitHub branch** - substitute your branch name for `<branch_name>`:
+
+```bash
+npx skills add https://github.com/PUDAP/skills/tree/<branch_name> -y
+```
+
+**Local directory** - path to this repository or another folder containing skill packages:
+
+```bash
+npx skills add ./bears-skills -y
+```
 
 ## Core Rule
-**Do not assume**. If a decision affects machine choice, workflow selection, protocol execution, credentials, hardware setup, or experimental parameters, ask the user first.
+
+Do not assume. If a decision affects machine choice, workflow selection, protocol execution, credentials, hardware setup, deck slots, reporting identifiers, or experimental parameters, ask the user first.
+
+## References
+
+- [PUDAP Skills README](https://github.com/PUDAP/skills/blob/main/README.md)
+- [Agent Skills](https://agentskills.io)
