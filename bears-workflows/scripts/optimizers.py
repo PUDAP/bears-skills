@@ -427,8 +427,6 @@ class SOCM_LLM:
         next_volumes = optimizer.suggest()
     """
 
-    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
     def __init__(
         self,
         model: str,
@@ -442,8 +440,14 @@ class SOCM_LLM:
         self.total_volume = total_volume
         self.max_retries = max_retries
 
+        base_url = os.environ.get("OPENROUTER_BASE_URL")
+        if not base_url:
+            raise EnvironmentError(
+                "OPENROUTER_BASE_URL is not set. Add it to your local .env file."
+            )
+
         self._client = OpenAI(
-            base_url=self.OPENROUTER_BASE_URL,
+            base_url=base_url,
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
         )
 
@@ -830,8 +834,6 @@ class SOVH_LLM:
         nxt = opt.suggest()  # {\"volume\": ...}
     """
 
-    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
     def __init__(
         self,
         model: str,
@@ -863,8 +865,14 @@ class SOVH_LLM:
 
         self._volume_transfer_prompt = len(self._names) == 1 and self._names[0] == "volume"
 
+        base_url = os.environ.get("OPENROUTER_BASE_URL")
+        if not base_url:
+            raise EnvironmentError(
+                "OPENROUTER_BASE_URL is not set. Add it to your local .env file."
+            )
+
         self._client = OpenAI(
-            base_url=self.OPENROUTER_BASE_URL,
+            base_url=base_url,
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
         )
 

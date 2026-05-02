@@ -329,6 +329,7 @@ On stop: generate a final summary report using the markdown structure defined in
 - Never ask the user to paste API keys, tokens, passwords, or other secrets into chat.
 - If `LLM` optimization requires credentials such as `OPENROUTER_API_KEY`, require them to be pre-configured in the local environment outside the chat before running.
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
+- `OPENROUTER_BASE_URL` must also be set in the local `.env` file before running any LLM optimizer. If it is not found, stop and instruct the user to add it and do not proceed until the variable is confirmed set.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
 - Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`

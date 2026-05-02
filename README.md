@@ -26,7 +26,6 @@ The `bears-machines` skill covers PUDA-connected machines available at BEARS.
 | **Balance Machine** | `balance` | Gravimetric mass measurement using an Arduino-based USB load-cell balance on Linux, with tare, freshness checks, and NATS telemetry. |
 | **Opentrons Machine** | `opentrons` | OT-2 liquid handling and protocol generation, including labware setup, pipetting, flow control, CSV-driven loops, and camera capture. |
 
-Before command generation, load [`bears-machines/SKILL.md`](bears-machines/SKILL.md), read the matching reference in [`bears-machines/references/`](bears-machines/references/), and run `puda machine commands <machine_id>` when command details are needed.
 
 ## BEARS Workflows
 
@@ -37,7 +36,6 @@ The `bears-workflows` skill covers PUDA experiment workflows used at BEARS.
 | **colour-mixing-opt** | Iterative RGB dye mixing optimization using OT-2 dispensing, camera feedback, image processing, RMSE scoring, and Bayesian Optimization or LLM suggestions. |
 | **viscosity-optimization** | Iterative tuning of OT-2 liquid handling parameters for viscous fluids using PUDA balance machine feedback, transfer-error calculation, Bayesian Optimization or LLM suggestions, and final `puda-report` reporting. |
 
-Before running a workflow, load [`bears-workflows/SKILL.md`](bears-workflows/SKILL.md), read the matching reference in [`bears-workflows/references/`](bears-workflows/references/), confirm all required hardware and experiment inputs, and invoke `puda-memory` after protocol creation or execution.
 
 ## CLI Reference
 
@@ -45,21 +43,21 @@ Common PUDA CLI commands used by these skills:
 
 ```bash
 puda
-+-- protocol
-|   +-- run                  Run a protocol on machines via NATS
-|   +-- validate             Validate a protocol JSON file
-+-- machine
-|   +-- list                 Discover machines via heartbeat
-|   +-- state <machine_id>   Get the state of a machine
-|   +-- reset <machine_id>   Reset a machine
-|   +-- commands <machine_id> Show available commands
-+-- init [path]              Initialize a new PUDA project
-+-- skills
-|   +-- install              Install agent skills
-|   +-- update               Update agent skills
-+-- db
-    +-- exec [sql]           Execute SQL queries on the database
-    +-- schema               Display the database schema
+├── protocol
+│   ├── run                  Run a protocol on machines via NATS
+│   └── validate             Validate a protocol JSON file
+├── machine
+│   ├── list                 Discover machines via heartbeat
+│   ├── state <machine_id>   Get the state of a machine
+│   ├── reset <machine_id>   Reset a machine
+│   └── commands <machine_id> Show available commands
+├── init [path]              Initialize a new PUDA project
+├── skills
+│   ├── install              Install agent skills
+│   └── update               Update agent skills
+└── db
+    ├── exec [sql]           Execute SQL queries on the database
+    └── schema               Display the database schema
 ```
 
 ## Installing Skills With The PUDA CLI
@@ -94,11 +92,3 @@ npx skills add https://github.com/PUDAP/skills/tree/<branch_name> -y
 npx skills add ./bears-skills -y
 ```
 
-## Core Rule
-
-Do not assume. If a decision affects machine choice, workflow selection, protocol execution, credentials, hardware setup, deck slots, reporting identifiers, or experimental parameters, ask the user first.
-
-## References
-
-- [PUDAP Skills README](https://github.com/PUDAP/skills/blob/main/README.md)
-- [Agent Skills](https://agentskills.io)
