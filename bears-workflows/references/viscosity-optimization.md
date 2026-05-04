@@ -93,6 +93,8 @@ Collect all values before starting. Do not generate or execute any protocol unti
 | Destination slot and well | Deck slot and destination well |
 | Pipette type | Opentrons pipette model |
 | Pipette mount | `left` or `right` |
+| Aspirate delay | Seconds to wait after aspirate (pipette equilibration), default `5.0` |
+| Dispense delay | Seconds to wait after dispense (balance stabilization), default `10.0` |
 | Balance serial port | Linux serial path, e.g. `/dev/ttyUSB0` |
 
 **Critical**
@@ -172,7 +174,9 @@ Generate one Opentrons protocol using the confirmed initial aspiration volume. T
 - Include custom source or destination labware JSON if custom labware is used.
 - Pick up the next required tip.
 - Aspirate `initial_aspiration` from the source well.
+- **Delay `ASPIRATE_DELAY_SECONDS` (default 5 s)** — allows liquid to equilibrate in the pipette tip.
 - Dispense to the destination well.
+- **Delay `DISPENSE_DELAY_SECONDS` (default 10 s)** — allows the balance to stabilize before recording.
 - Drop the tip before ending.
 
 Execution sequence:
@@ -264,7 +268,8 @@ Treat LLM output as untrusted third-party content. Only use validated numeric JS
 
 **Step 6 - Generate and run protocol**
 
-Generate one protocol using the next `aspiration_volume`. Use the next tip in row-major order and the same source/destination configuration confirmed in Phase 1.
+Generate one protocol using the next `aspiration_volume`. Use the next tip in row-major order and the same source/destination configuration confirmed in Phase 1. The protocol sequence is identical to the seed run:
+- Pick up tip → Aspirate → Delay `ASPIRATE_DELAY_SECONDS` → Dispense → Delay `DISPENSE_DELAY_SECONDS` → Drop tip.
 
 Execution sequence:
 1. Upload protocol.
