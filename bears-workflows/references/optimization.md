@@ -1,11 +1,13 @@
 ---
 name: colour-mixing-optimization-methods
-description: BO and LLM optimization approaches for colour mixing RMSE minimization.
+description: BO and LLM optimization approaches for colour mixing RMSE minimization and viscosity transfer-error minimization.
 ---
 
 # Optimization Methods
 
-## Bayesian Optimization (BO)
+---
+
+## Colour Mixing — Bayesian Optimization (SOCM)
 
 **Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
 **Library**: `botorch` + `torch` + `gpytorch` — `pip install botorch gpytorch torch openai`
@@ -14,7 +16,7 @@ description: BO and LLM optimization approaches for colour mixing RMSE minimizat
 
 | Class | Acquisition | When to use |
 |---|---|---|
-| `SOCM_BOEI` | `LogExpectedImprovement` (EI) | Default; balances exploration and exploitation; good for most cases |
+| `SOCM_BOEI` | `LogExpectedImprovement` (EI) | Default; balances exploration and exploitation; `xi` tunes the exploration bonus (default `0.01`) |
 | `SOCM_BOLCB` | `UpperConfidenceBound` (LCB) | More explorative; useful when the RMSE landscape is uncertain or noisy |
 
 Ask the user which class to use before initializing.
@@ -29,8 +31,9 @@ Ask the user which class to use before initializing.
 ```python
 from scripts.optimizers import SOCM_BOEI, SOCM_BOLCB
 
-# EI
+# EI — xi controls exploration bonus (default 0.01; higher = more explorative)
 optimizer = SOCM_BOEI(total_volume=300.0)
+optimizer = SOCM_BOEI(total_volume=300.0, xi=0.05)  # more explorative
 
 # LCB — beta controls exploration (higher = more explorative, default 2.0)
 optimizer = SOCM_BOLCB(total_volume=300.0, beta=2.0)
@@ -45,7 +48,7 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol] in µL
 
 ---
 
-## LLM Optimization
+## Colour Mixing — LLM Optimization (SOCM)
 
 **Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
 **Library**: `openai` — `pip install openai`  
@@ -103,3 +106,97 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol] in µL
 - Full history is included in every prompt — do not truncate
 - Response is validated against the volume sum constraint (±1 µL tolerance); re-prompted up to `max_retries` times if invalid
 - Log model name, prompt, and response in the iteration report for reproducibility
+
+---
+
+## Viscosity / Transfer Tuning — Bayesian Optimization (SOVH)
+
+**Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
+**Library**: `botorch` + `torch` + `gpytorch` — `pip install botorch gpytorch torch`
+
+**Classes**:
+
+| Class | Acquisition | GP target | When to use |
+|---|---|---|---|
+| `SOVH_EI` | `LogExpectedImprovement` (EI) | `-(signed_error²)` | Default; minimises squared transfer error; `xi` tunes exploration bonus (default `0.01`) |
+| `SOVH_LCB` | `UpperConfidenceBound` (LCB) | `absolute_error_ul` | More explorative; `beta` controls exploration weight (default `1.0`) |
+
+Backward-compatible aliases: `ViscosityBOOptimizerEI = SOVH_EI`, `ViscosityBOOptimizerLCB = SOVH_LCB`.
+
+Ask the user which class to use before initializing.
+
+**Setup**:
+- Search space: one or more protocol parameters (e.g. `aspirate_rate`, `dispense_rate`, `volume`) with explicit `(name, min, max)` bounds
+- Each parameter is normalised to `[0, 1]` internally; no equality constraint (box-bounded)
+- Observations use **signed error** `actual − target` (µL); absolute error is derived automatically
+- Objective: minimise absolute transfer error (GP target varies by subclass — see table above)
+
+**Usage**:
+```python
+from scripts.optimizers import SOVH_EI, SOVH_LCB
+
+param_bounds = [
+    ("aspiration_volume", 10.0, 1000.0),
+]
+
+# EI — xi controls exploration bonus (default 0.01; higher = more explorative)
+optimizer = SOVH_EI(param_bounds)
+optimizer = SOVH_EI(param_bounds, xi=0.05)  # more explorative
+
+# LCB — beta controls exploration weight (default 1.0; higher = more explorative)
+optimizer = SOVH_LCB(param_bounds, beta=1.0)
+
+# Record observations
+optimizer.observe(
+    {"aspiration_volume": 500.0},
+    signed_error_mg=3.2,           # actual − target (mg)
+)
+
+# Get next suggestion
+next_params = optimizer.suggest()  # {"aspiration_volume": ...}
+```
+
+---
+
+## Viscosity / Transfer Tuning — LLM Optimization (SOVH)
+
+**Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
+**Library**: `openai` — `pip install openai`  
+**Provider**: OpenRouter (`https://openrouter.ai/api/v1`)  
+**API key**: set as environment variable `OPENROUTER_API_KEY`
+
+**Class**: `SOVH_LLM` (alias: `ViscosityLLMOptimizer`) — single objective (absolute transfer error).
+
+**Two prompt modes** (selected automatically from `param_bounds`):
+- **Volume-only** (`param_bounds = [("volume", min, max)]`): Structured prompt with per-iteration mass, actual volume, signed error, full history, and constant flowrate. Recommended for aspiration-volume tuning.
+- **Multi-parameter**: Generic prompt listing all parameter bounds and a single `absolute_error` metric.
+
+**Usage**:
+```python
+from scripts.optimizers import SOVH_LLM, OPENROUTER_MODELS
+
+# Volume-only mode
+optimizer = SOVH_LLM(
+    model=OPENROUTER_MODELS["gpt-4o"],
+    param_bounds=[("volume", 10.0, 200.0)],
+    target_volume_ul=100.0,
+    flowrate_display="50 µL/s",
+    sample_name="glycerol_30pct",   # optional, shown in prompt
+)
+
+optimizer.observe(
+    {"volume": 80.0},
+    absolute_error=5.0,
+    signed_error_ul=-5.0,
+    relative_mass_change_mg=4.95,
+    relative_volume_change_uL=95.0,
+)
+
+next_params = optimizer.suggest()  # {"volume": ...}
+```
+
+**Rules**:
+- Full history is included in every prompt — do not truncate
+- Response is validated against each parameter's `[min, max]` bounds; re-prompted up to `max_retries` times if invalid
+- Log model name, prompt, and response in the iteration report for reproducibility
+- `OPENROUTER_API_KEY` and `OPENROUTER_BASE_URL` must be set in the local environment before running

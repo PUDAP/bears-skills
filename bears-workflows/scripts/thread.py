@@ -119,15 +119,19 @@ def monitor_balance_threaded(
     _puda_path = Path(puda_exe)
     cwd = str(_puda_path.parent) if _puda_path.exists() else None
 
-    # Give the subprocess a generous timeout; we terminate it ourselves on stop
-    watch_timeout = int(max_duration) + 60 if max_duration is not None else 86400
+    # Option B fix (S2): launch puda machine watch with a short timeout and
+    # restart in a loop, checking stop_event between invocations.  This
+    # prevents the blocking `for line in proc.stdout` from hanging forever
+    # when the NATS stream goes quiet — the subprocess exits after watch_chunk
+    # seconds and we re-check stop_event before relaunching.
+    watch_chunk = min(int(max_duration or 30), 30)  # re-launch every ≤30 s
 
     cmd = [
         puda_exe,
         "machine", "watch",
         "--targets", "balance",
         "--subjects", "pos",
-        "--timeout", str(watch_timeout),
+        "--timeout", str(watch_chunk),
     ]
 
     balance_readings: list[dict] = []
@@ -136,60 +140,73 @@ def monitor_balance_threaded(
     start_time = time.time()
 
     print(f"Starting balance monitoring via puda.balance.tlm.pos "
-          f"(max {max_duration if max_duration else 'unlimited'} s) …")
+          f"(max {max_duration if max_duration else 'unlimited'} s) ...")
 
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            cwd=cwd,
-        )
+        while not stop_event.is_set():
+            if max_duration is not None and (time.time() - start_time) >= max_duration:
+                break
 
-        try:
-            for line in proc.stdout:  # type: ignore[union-attr]
-                if stop_event.is_set():
-                    break
-                if max_duration is not None and (time.time() - start_time) >= max_duration:
-                    break
+            # Update timeout for the remaining allowed duration
+            if max_duration is not None:
+                remaining = max_duration - (time.time() - start_time)
+                chunk = min(watch_chunk, int(remaining) + 1)
+            else:
+                chunk = watch_chunk
 
-                line = line.strip()
-                if not line:
-                    continue
+            chunk_cmd = cmd[:-1] + [str(chunk)]
 
-                try:
-                    data = json.loads(line).get("data", {})
-                    if not data.get("fresh"):
-                        continue
-                    mass_g = data.get("mass_g")
-                    if mass_g is None:
-                        continue
-                    mass_mg = data.get("mass_mg") or mass_g * 1000
-                    elapsed = time.time() - start_time
+            proc = subprocess.Popen(
+                chunk_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                cwd=cwd,
+            )
 
-                    balance_readings.append({
-                        "time": round(elapsed, 3),
-                        "mass_g": mass_g,
-                        "mass_mg": mass_mg,
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-                    })
-                    reading_count += 1
-
-                    if reading_count % 40 == 0:  # log every ~10 s at 4 Hz
-                        print(f"  Balance reading {reading_count}: "
-                              f"{mass_mg:.2f} mg @ {elapsed:.2f} s")
-
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-        finally:
-            proc.terminate()
             try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    if stop_event.is_set():
+                        break
+                    if max_duration is not None and (time.time() - start_time) >= max_duration:
+                        break
+
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line).get("data", {})
+                        if not data.get("fresh"):
+                            continue
+                        mass_g = data.get("mass_g")
+                        if mass_g is None:
+                            continue
+                        mass_mg = data.get("mass_mg") or mass_g * 1000
+                        elapsed = time.time() - start_time
+
+                        balance_readings.append({
+                            "time": round(elapsed, 3),
+                            "mass_mg": mass_mg,
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+                        })
+                        reading_count += 1
+
+                        if reading_count % 40 == 0:  # log every ~10 s at 4 Hz
+                            print(f"  Balance reading {reading_count}: "
+                                  f"{mass_mg:.2f} mg @ {elapsed:.2f} s")
+
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            # subprocess chunk ended — loop back to check stop_event
 
         stop_reason = (
             "stop_event" if stop_event.is_set()
@@ -307,11 +324,11 @@ def _parse_cmd(cmd: dict, start_time: float) -> dict | None:
 
     if ntype in ("aspirate", "dispense"):
         vol_str = f" {volume} µL" if volume is not None else ""
-        print(f"   🔄 {ntype.capitalize()}{vol_str} | Location: {location}")
+        print(f"   [CMD] {ntype.capitalize()}{vol_str} | Location: {location}")
     elif ntype == "delay":
-        print(f"   ⏱️ Pausing{f' {delay_duration}s' if delay_duration else ''}")
+        print(f"   [DELAY] Pausing{f' {delay_duration}s' if delay_duration else ''}")
     else:
-        print(f"   🔧 {ntype}")
+        print(f"   [CMD] {ntype}")
 
     return {
         "elapsed_time": time.time() - start_time,
@@ -336,6 +353,7 @@ def monitor_protocol_status_threaded(
     result_dict: dict | None = None,
     stop_event: threading.Event | None = None,
     protocol_start_time: float | None = None,
+    startup_delay: float = 2.0,
 ) -> None:
     """
     Monitor an Opentrons protocol run in a background thread.
@@ -347,8 +365,20 @@ def monitor_protocol_status_threaded(
 
     Args:
         robot_ip:             IP address of the OT-2 robot.
-        run_id:               Specific run ID to monitor.  If *None* the most
-                              recent (or currently-running) run is used.
+        run_id:               Robot HTTP API run ID to monitor.  If *None*
+                              the most recent (or currently-running) run is
+                              used.
+
+                              **Important:** do NOT pass the puda internal
+                              run ID printed as ``"Run ID: ..."`` by
+                              ``puda protocol run`` — that is a database
+                              tracking ID and is different from the robot's
+                              HTTP run ID.  Passing the wrong ID causes every
+                              ``GET /runs/{run_id}`` to return HTTP 404 and
+                              the function will silently time out after
+                              *max_wait_time* seconds.  If an unrecognised ID
+                              is supplied the function automatically falls
+                              back to the most recently created robot run.
         max_wait_time:        Seconds before timing out.
         check_interval:       Polling interval in seconds.
         api_base_url:         Ignored; present for backward compatibility.
@@ -357,6 +387,10 @@ def monitor_protocol_status_threaded(
         stop_event:           Set when the protocol finishes so paired threads
                               can exit cleanly.
         protocol_start_time:  ``time.time()`` reference for elapsed timestamps.
+        startup_delay:        Seconds to wait after startup before polling
+                              begins.  Allows the robot time to register the
+                              run.  Default is ``2.0`` s; increase if the
+                              robot is slow to initialise.
     """
     if result_dict is None:
         result_dict = {}
@@ -368,12 +402,34 @@ def monitor_protocol_status_threaded(
     base_url = f"http://{robot_ip}:31950"
     hdrs = {"opentrons-version": "*"}
 
-    print("🤖 Starting protocol status and command monitoring...")
+    print(">> Starting protocol status and command monitoring...")
     print(f"   Robot IP: {robot_ip}")
     print(f"   Run ID: {run_id or 'None (will use latest run)'}")
-    print("   📊 Protocol execution status updates will be shown below:\n")
-    print("   ⏳ Waiting 5 seconds for protocol to initialize...")
-    time.sleep(5)
+    print("   [STATUS] Protocol execution status updates will be shown below:\n")
+    print(f"   [WAIT] Waiting {startup_delay}s for protocol to initialize...")
+    time.sleep(startup_delay)
+
+    # S3 fix: puda protocol run prints its own internal database ID as
+    # "Run ID: ..." which is NOT the robot HTTP run ID.  If the caller
+    # passes that ID, every GET /runs/{run_id} returns 404 and the function
+    # silently burns the full max_wait_time.  Detect this early by probing
+    # the run once; on 404 fall back to the most recently created robot run.
+    if run_id is not None:
+        try:
+            _probe = requests.get(f"{base_url}/runs/{run_id}", headers=hdrs, timeout=5)
+            if _probe.status_code == 404:
+                print(f"   [WARN] Run ID {run_id!r} not found on robot "
+                      f"(may be a puda internal ID). Resolving from robot run list...")
+                _runs_resp = requests.get(f"{base_url}/runs", headers=hdrs, timeout=5)
+                _runs = _runs_resp.json().get("data", []) if _runs_resp.ok else []
+                if _runs:
+                    run_id = _runs[-1]["id"]
+                    print(f"   [OK] Resolved robot run ID: {run_id}")
+                else:
+                    print("   [WARN] No runs found on robot; will poll for a new run.")
+                    run_id = None
+        except Exception as _exc:
+            print(f"   [WARN] Could not probe run ID: {_exc}")
 
     seen_ids: set[str] = set()
     commands: list[dict] = []
@@ -387,7 +443,7 @@ def monitor_protocol_status_threaded(
 
     def _finish(status: str) -> None:
         nonlocal protocol_complete
-        print(f"✅ Protocol completed with status: {status}")
+        print(f"[OK] Protocol completed with status: {status}")
         result_dict.update(protocol_status=status, protocol_complete=True,
                            protocol_commands=commands)
         stop_event.set()
@@ -421,9 +477,9 @@ def monitor_protocol_status_threaded(
                         current_run_id = data.get("id", run_id)
                         if not run_id_verified:
                             run_id_verified = True
-                            print(f"   ✅ Verified monitoring run ID: {current_run_id}")
+                            print(f"   [OK] Verified monitoring run ID: {current_run_id}")
                         if status != last_status:
-                            print(f"   📊 Protocol status: {status}")
+                            print(f"   [STATUS] Protocol status: {status}")
                             last_status = status
                         _collect_commands(run_id)
                         conn_errors = 0
@@ -432,7 +488,7 @@ def monitor_protocol_status_threaded(
                     else:
                         conn_errors += 1
                         if conn_errors == 1:
-                            print(f"   ⚠️ Error getting run status: {resp.status_code}")
+                            print(f"   [WARN] Error getting run status: {resp.status_code}")
 
                 # --- Fallback: scan all runs ---
                 if not run_id or conn_errors > 0:
@@ -442,7 +498,7 @@ def monitor_protocol_status_threaded(
                         if not all_runs:
                             conn_errors += 1
                             if conn_errors == 1:
-                                print("   ⚠️ No runs found on robot")
+                                print("   [WARN] No runs found on robot")
                         else:
                             # Prefer our initial run; then most-recent running; then latest
                             target = (
@@ -461,16 +517,16 @@ def monitor_protocol_status_threaded(
                                 if not initial_run_id:
                                     initial_run_id = run_id
                                 run_id_verified = True
-                                print(f"   ✅ Using run ID: {run_id}")
+                                print(f"   [OK] Using run ID: {run_id}")
                             conn_errors = 0
                             _collect_commands(run_id)
                             if status != last_status:
-                                print(f"   📊 Protocol status: {status}")
+                                print(f"   [STATUS] Protocol status: {status}")
                                 last_status = status
                     else:
                         conn_errors += 1
                         if conn_errors == 1:
-                            print(f"   ⚠️ Error getting runs list: {runs_resp.status_code}")
+                            print(f"   [WARN] Error getting runs list: {runs_resp.status_code}")
 
                 # --- Check for terminal status ---
                 if status in ("succeeded", "failed", "stopped"):
@@ -480,35 +536,35 @@ def monitor_protocol_status_threaded(
                     else:
                         now = time.time()
                         if now - last_warning >= 30:
-                            print(f"   ⚠️ Run {current_run_id} is {status}; waiting to verify our run")
+                            print(f"   [WARN] Run {current_run_id} is {status}; waiting to verify our run")
                             last_warning = now
                 elif status == "running" and elapsed > 0 and elapsed % 10 == 0:
-                    print(f"   🤖 Protocol still running… ({elapsed}s elapsed, {len(commands)} commands)")
+                    print(f"   [ROBOT] Protocol still running... ({elapsed}s elapsed, {len(commands)} commands)")
 
             except requests.exceptions.Timeout:
                 conn_errors += 1
                 if conn_errors == 1:
-                    print(f"   ⚠️ Timeout connecting to robot at {robot_ip}:31950")
+                    print(f"   [WARN] Timeout connecting to robot at {robot_ip}:31950")
             except requests.exceptions.ConnectionError as exc:
                 conn_errors += 1
                 if conn_errors == 1:
-                    print(f"   ⚠️ Cannot connect to robot at {robot_ip}:31950\n      {exc}")
+                    print(f"   [WARN] Cannot connect to robot at {robot_ip}:31950\n      {exc}")
             except Exception as exc:
                 conn_errors += 1
                 if conn_errors <= 3:
-                    print(f"   ⚠️ Protocol monitoring error: {exc}")
+                    print(f"   [WARN] Protocol monitoring error: {exc}")
 
             time.sleep(check_interval)
             elapsed += check_interval
 
         if not protocol_complete:
-            print("⚠️ Timeout waiting for protocol completion")
+            print("[WARN] Timeout waiting for protocol completion")
             result_dict.update(protocol_status="timeout", protocol_complete=True,
                                protocol_commands=commands)
             stop_event.set()
 
     except Exception as exc:
-        print(f"❌ Protocol monitoring error: {exc}")
+        print(f"[ERROR] Protocol monitoring error: {exc}")
         result_dict.update(protocol_status="error", protocol_complete=True,
                            protocol_commands=commands, protocol_error=str(exc))
         stop_event.set()

@@ -126,6 +126,7 @@ This reference defines each available labware, what it is used for, and its vali
 - **Well:** `A1` — circular, diameter 17.0 mm, depth 56 mm
 - **Well volume:** 30,000 uL
 - **Namespace:** `custom_beta`
+- **JSON file:** `opentrons/driver/src/opentrons_driver/labware/mass_balance_vial_30000.json`
 
 #### `mass_balance_vial_50000`
 
@@ -138,6 +139,7 @@ This reference defines each available labware, what it is used for, and its vali
 - **Well:** `A1` — circular, diameter 17.5 mm, depth 56 mm
 - **Well volume:** 50,000 uL
 - **Namespace:** `custom_beta`
+- **JSON file:** `opentrons/driver/src/opentrons_driver/labware/mass_balance_vial_50000.json`
 
 ## `trash_bin`
 

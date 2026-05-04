@@ -502,9 +502,9 @@ def plot_and_save_viscosity_graph(
 
 def analyze_balance_data(
     balance_readings: list[dict[str, Any]],
-    target_volume: float | None = None,
+    target_mass: float | None = None,
 ) -> dict[str, Any] | None:
-    """Analyze balance readings and calculate volume/error metrics."""
+    """Analyze balance readings and calculate mass-change and error metrics in mg."""
     if not balance_readings or not _require_pandas():
         return None
 
@@ -517,28 +517,23 @@ def analyze_balance_data(
     min_weight = float(df["mass_mg"].min())
     relative_mass_change = max_weight - min_weight
 
-    # For aqueous calibration, 1 mg is approximately 1 uL.
-    relative_volume_change = relative_mass_change
-
-    volume_error = None
-    if target_volume is not None and target_volume > 0:
-        volume_error = float(target_volume) - relative_volume_change
+    mass_error = None
+    if target_mass is not None and target_mass > 0:
+        mass_error = float(target_mass) - relative_mass_change
 
     return {
         "relative_mass_change_mg": relative_mass_change,
-        "relative_volume_change_uL": relative_volume_change,
-        "volume_error_uL": volume_error,
+        "mass_error_mg": mass_error,
         "max_weight_mg": max_weight,
         "min_weight_mg": min_weight,
         "readings_count": len(df),
     }
 
 
-def calculate_signed_error(actual_weight_change: float, target_weight_change: float) -> float:
+def calculate_signed_error(actual_mass_change_mg: float, target_mass_mg: float) -> float:
     """
-    Calculate signed error between actual and target weight change in mg.
+    Calculate signed error between actual and target mass change (mg).
 
-    Weight changes may be negative for aspiration. Error is actual - target:
-    positive means over-aspiration; negative means under-aspiration.
+    Positive means over-transfer; negative means under-transfer.
     """
-    return float(actual_weight_change) - float(target_weight_change)
+    return float(actual_mass_change_mg) - float(target_mass_mg)

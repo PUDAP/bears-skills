@@ -10,7 +10,7 @@ Colour mixing:
 
 Viscosity — single-objective (SOVH), box-bounded parameters:
     SOVH_BO  — abstract base: one minimised scalar (e.g. abs error)
-    SOVH_EO  — LogEI
+    SOVH_EI  — LogEI
     SOVH_LCB — UpperConfidenceBound with maximize=False on absolute error
 
 Aliases: ViscosityBOOptimizer* → SOVH_* (backward compatible).
@@ -324,21 +324,41 @@ class SOCM_BOEI(SOCM_BO):
 
     Args:
         total_volume (float): Total well volume in µL.
+        xi (float): Exploration bonus added to the current best observed value
+            before computing EI.  ``xi > 0`` encourages more exploration;
+            ``xi = 0`` is pure exploitation-focused EI.  Default: ``0.01``.
         num_restarts (int): Restarts for acquisition optimisation. Default: 10.
         raw_samples (int): Raw samples for initialisation. Default: 64.
 
     Example:
-        optimizer = SOCM_BOEI(total_volume=300.0)
+        optimizer = SOCM_BOEI(total_volume=300.0, xi=0.01)
         for volumes, rmse in x_init_results:
             optimizer.observe(volumes, rmse)
         next_volumes = optimizer.suggest()
     """
+
+    def __init__(
+        self,
+        total_volume: float,
+        xi: float = 0.01,
+        num_restarts: int = 10,
+        raw_samples: int = 64,
+    ) -> None:
+        super().__init__(
+            total_volume=total_volume,
+            num_restarts=num_restarts,
+            raw_samples=raw_samples,
+        )
+        self.xi = xi
 
     def _build_acquisition(
         self, model: SingleTaskGP, train_Y: torch.Tensor
     ) -> LogExpectedImprovement:
         """
         Build a LogExpectedImprovement acquisition function.
+
+        ``xi`` is added to the current best so that EI targets improvement
+        beyond ``best_f + xi``, controlling the exploration–exploitation trade-off.
 
         Args:
             model: Fitted SingleTaskGP surrogate.
@@ -347,7 +367,7 @@ class SOCM_BOEI(SOCM_BO):
         Returns:
             LogExpectedImprovement acquisition function.
         """
-        return LogExpectedImprovement(model=model, best_f=train_Y.max())
+        return LogExpectedImprovement(model=model, best_f=train_Y.max() + self.xi)
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +608,7 @@ class SOVH_BO(ABC):
     minimise **absolute** transfer error (µL) over box-bounded protocol parameters.
 
     Observations use **signed error** ``actual − target`` (µL). The GP surrogate
-    target depends on the subclass (see :class:`SOVH_EO` and
+    target depends on the subclass (see :class:`SOVH_EI` and
     :class:`SOVH_LCB`).
 
     Each parameter is mapped linearly to ``[0, 1]``.
@@ -721,20 +741,39 @@ class SOVH_BO(ABC):
         """Build the acquisition function for this SOVH variant."""
 
 
-class SOVH_EO(SOVH_BO):
+class SOVH_EI(SOVH_BO):
     """
     Viscosity single-objective BO using Expected Improvement (LogEI).
 
     The GP is fit on ``-(signed_error_ul ** 2)`` (≤ 0), which is maximised when
     signed error is near zero — equivalent to reducing absolute transfer error.
 
+    Args:
+        param_bounds: Same as :class:`SOVH_BO`.
+        xi (float): Exploration bonus added to the current best observed value
+            before computing EI.  ``xi > 0`` encourages more exploration;
+            ``xi = 0`` is pure exploitation-focused EI.  Default: ``0.01``.
+        num_restarts: Restarts for acquisition optimisation. Default: 10.
+        raw_samples: Raw samples for initialisation. Default: 64.
+
     Example:
-        opt = SOVH_EO(
+        opt = SOVH_EI(
             [("aspirate_rate", 10.0, 150.0), ("dispense_rate", 10.0, 150.0)],
+            xi=0.01,
         )
         opt.observe({"aspirate_rate": 50.0, "dispense_rate": 50.0}, signed_error_ul=3.0)
         nxt = opt.suggest()
     """
+
+    def __init__(
+        self,
+        param_bounds: list[tuple[str, float, float]],
+        xi: float = 0.01,
+        num_restarts: int = 10,
+        raw_samples: int = 64,
+    ) -> None:
+        super().__init__(param_bounds, num_restarts, raw_samples)
+        self.xi = xi
 
     def _compute_gp_target(self, signed_error_ul: float, absolute_error_ul: float) -> float:
         return -(signed_error_ul ** 2)
@@ -742,7 +781,7 @@ class SOVH_EO(SOVH_BO):
     def _build_acquisition(
         self, model: SingleTaskGP, train_Y: torch.Tensor
     ) -> LogExpectedImprovement:
-        return LogExpectedImprovement(model=model, best_f=train_Y.max())
+        return LogExpectedImprovement(model=model, best_f=train_Y.max() + self.xi)
 
 
 class SOVH_LCB(SOVH_BO):
@@ -783,7 +822,7 @@ class SOVH_LCB(SOVH_BO):
 
 # Backward-compatible aliases (SOVH)
 ViscosityBOOptimizerBase = SOVH_BO
-ViscosityBOOptimizerEI = SOVH_EO
+ViscosityBOOptimizerEI = SOVH_EI
 ViscosityBOOptimizerLCB = SOVH_LCB
 
 
