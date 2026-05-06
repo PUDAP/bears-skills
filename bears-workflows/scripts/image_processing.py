@@ -24,6 +24,7 @@ Dependencies:
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 
@@ -85,6 +86,36 @@ DEFAULT_CONFIG = ImageConfig(
     row_num=8,     # rows A–H, top → bottom
     offset_array=[[54, 54], [54, 54]],
 )
+
+
+def load_config_override(config_path: str | None = None) -> ImageConfig:
+    """
+    Load an ImageConfig override from JSON, falling back to DEFAULT_CONFIG.
+
+    Expected JSON keys match ImageConfig fields. If config_path is omitted,
+    use env var PUDA_IMAGE_CONFIG when present. Missing file -> DEFAULT_CONFIG.
+    """
+    path = config_path or os.environ.get("PUDA_IMAGE_CONFIG")
+    if not path:
+        return DEFAULT_CONFIG
+    if not os.path.exists(path):
+        return DEFAULT_CONFIG
+
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    return ImageConfig(
+        src_corners=[tuple(point) for point in data.get("src_corners", DEFAULT_CONFIG.src_corners)],
+        dst_corners=[tuple(point) for point in data.get("dst_corners", DEFAULT_CONFIG.dst_corners)],
+        plate_width=int(data.get("plate_width", DEFAULT_CONFIG.plate_width)),
+        plate_height=int(data.get("plate_height", DEFAULT_CONFIG.plate_height)),
+        col_num=int(data.get("col_num", DEFAULT_CONFIG.col_num)),
+        row_num=int(data.get("row_num", DEFAULT_CONFIG.row_num)),
+        offset_array=[
+            [int(value) for value in row]
+            for row in data.get("offset_array", DEFAULT_CONFIG.offset_array)
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------

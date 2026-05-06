@@ -56,7 +56,11 @@ row H   H1      H2         H12     ← bottom-left to bottom-right
 
 ```python
 DEFAULT_CONFIG = ImageConfig(
+<<<<<<< Updated upstream
     src_corners=[(274, 237), (374, 238), (374, 303), (274, 302)]
+=======
+    src_corners=[(270, 238), (373, 237), (369, 303), (274, 301)]
+>>>>>>> Stashed changes
     dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
     plate_width=1800,
     plate_height=1200,
