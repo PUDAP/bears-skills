@@ -22,8 +22,8 @@ description: BO and LLM optimization approaches for colour mixing RMSE minimizat
 Ask the user which class to use before initializing.
 
 **Setup**:
-- Search space: `R_vol`, `G_vol`, `B_vol` in µL, normalised to `[0, 1]` internally
-- **Equality constraint**: `x1 + x2 + x3 = 1` (normalised) — passed directly to `optimize_acqf` via `equality_constraints`; maps to `R_vol + G_vol + B_vol = total_volume` in µL
+- Search space: `R_vol`, `G_vol`, `B_vol`, `water_vol` in µL, normalised to `[0, 1]` internally
+- **Equality constraint**: `x1 + x2 + x3 + x4 = 1` (normalised) — passed directly to `optimize_acqf` via `equality_constraints`; maps to `R_vol + G_vol + B_vol + water_vol = total_volume` in µL
 - Objective: minimize RMSE (negated internally — botorch maximises)
 - Surrogate: `SingleTaskGP` with Matérn 5/2 kernel, refit after every observation
 
@@ -43,7 +43,7 @@ for volumes, rmse in x_init_results:
     optimizer.observe(volumes, rmse)
 
 # Get next suggestion each iteration
-next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol] in µL
+next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 ```
 
 ---
@@ -99,12 +99,12 @@ for volumes, rgb, rmse in x_init_results:
     optimizer.observe(volumes, rgb, rmse)
 
 # Get next suggestion each iteration
-next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol] in µL
+next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 ```
 
 **Rules**:
 - Full history is included in every prompt — do not truncate
-- Response is validated against the volume sum constraint (±1 µL tolerance); re-prompted up to `max_retries` times if invalid
+- Response is validated against the volume sum constraint (±1 µL tolerance) using `R_vol + G_vol + B_vol + water_vol = total_volume`; re-prompted up to `max_retries` times if invalid
 - Log model name, prompt, and response in the iteration report for reproducibility
 
 ---

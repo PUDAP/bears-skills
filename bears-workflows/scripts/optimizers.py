@@ -163,18 +163,18 @@ def _extract_first_json_object_text(response: str) -> str:
 
 class SOCM_BO(ABC):
     """
-    Abstract base class for Bayesian Optimization of RGB colour mixing volumes.
+    Abstract base class for Bayesian Optimization of RGBy colour mixing volumes.
 
     Maintains a running history of (volume_ratios, RMSE) observations, refits a
     SingleTaskGP surrogate after each observation, and suggests the next
-    (R_vol, G_vol, B_vol) expected to reduce RMSE.
+    (R_vol, G_vol, B_vol, water_vol) expected to reduce RMSE.
 
     Inputs are normalised to [0, 1] per dimension so that the equality constraint
-    x1 + x2 + x3 = 1 is enforced directly in the optimisation. RMSE is negated
+    x1 + x2 + x3 + x4 = 1 is enforced directly in the optimisation. RMSE is negated
     because botorch maximises the acquisition function.
 
-    Equality constraint: x1 + x2 + x3 = 1  (normalised space)
-    This maps to R_vol + G_vol + B_vol = total_volume in µL.
+    Equality constraint: x1 + x2 + x3 + x4 = 1  (normalised space)
+    This maps to R_vol + G_vol + B_vol + water_vol = total_volume in µL.
 
     Args:
         total_volume (float): Total well volume in µL. All suggested volumes sum to this.
@@ -182,15 +182,15 @@ class SOCM_BO(ABC):
         raw_samples (int): Raw samples for initialising the optimisation. Default: 64.
     """
 
-    N_DIMS = 3  # R_vol, G_vol, B_vol
+    N_DIMS = 4  # R_vol, G_vol, B_vol, water_vol
 
-    # Equality constraint: indices [0,1,2], coefficients [1,1,1], rhs = 1.0
-    # Enforces x1 + x2 + x3 = 1 in normalised space during optimize_acqf.
+    # Equality constraint: indices [0,1,2,3], coefficients [1,1,1,1], rhs = 1.0
+    # Enforces x1 + x2 + x3 + x4 = 1 in normalised space during optimize_acqf.
     _EQUALITY_CONSTRAINTS = [
         (
-            torch.tensor([0, 1, 2]),          # indices of all three dimensions
-            torch.tensor([1.0, 1.0, 1.0]),    # coefficients
-            1.0,                               # rhs: x1 + x2 + x3 = 1
+            torch.tensor([0, 1, 2, 3]),            # indices of all four dimensions
+            torch.tensor([1.0, 1.0, 1.0, 1.0]),    # coefficients
+            1.0,                                     # rhs: x1 + x2 + x3 + x4 = 1
         )
     ]
 
@@ -219,22 +219,30 @@ class SOCM_BO(ABC):
         Record a new observation.
 
         Args:
-            volumes: [R_vol, G_vol, B_vol] in µL from the last protocol run.
+            volumes: [R_vol, G_vol, B_vol, water_vol] in µL from the last protocol run.
             rmse: Measured RMSE for those volumes.
         """
+        if len(volumes) == 3:
+            # Backward compatibility with older RGB-only observations.
+            inferred_water = self.total_volume - sum(float(v) for v in volumes)
+            volumes = [*volumes, inferred_water]
+        if len(volumes) != self.N_DIMS:
+            raise ValueError(
+                f"Expected {self.N_DIMS} volumes [R,G,B,water], got {len(volumes)}"
+            )
         self._train_X.append([v / self.total_volume for v in volumes])
         self._train_Y.append(-rmse)
 
     def suggest(self) -> list[float]:
         """
-        Suggest the next (R_vol, G_vol, B_vol) in µL.
+        Suggest the next (R_vol, G_vol, B_vol, water_vol) in µL.
 
         Refits the GP on all observations and optimises the acquisition function
-        subject to the equality constraint x1 + x2 + x3 = 1 (normalised space),
+        subject to the equality constraint x1 + x2 + x3 + x4 = 1 (normalised space),
         which guarantees the returned volumes sum to total_volume.
 
         Returns:
-            [R_vol, G_vol, B_vol] in µL, guaranteed to sum to total_volume.
+            [R_vol, G_vol, B_vol, water_vol] in µL, guaranteed to sum to total_volume.
 
         Raises:
             RuntimeError: If called before any observations have been recorded.
@@ -273,7 +281,7 @@ class SOCM_BO(ABC):
         Fit a SingleTaskGP surrogate on all observations.
 
         Args:
-            train_X: Normalised input tensor, shape (n, 3).
+            train_X: Normalised input tensor, shape (n, 4).
             train_Y: Negated RMSE tensor, shape (n, 1).
 
         Returns:
@@ -288,16 +296,16 @@ class SOCM_BO(ABC):
         """
         Convert a normalised candidate back to µL.
 
-        The equality constraint x1 + x2 + x3 = 1 is already enforced by
+        The equality constraint x1 + x2 + x3 + x4 = 1 is already enforced by
         optimize_acqf, so the candidate should sum to 1 in normalised space.
         The rescaling step below is a numerical safety clip only.
 
         Args:
-            candidate: Optimised candidate, shape (1, 3), values in [0, 1]
-                       satisfying x1 + x2 + x3 = 1.
+            candidate: Optimised candidate, shape (1, 4), values in [0, 1]
+                       satisfying x1 + x2 + x3 + x4 = 1.
 
         Returns:
-            [R_vol, G_vol, B_vol] in µL summing to total_volume.
+            [R_vol, G_vol, B_vol, water_vol] in µL summing to total_volume.
         """
         volumes = candidate.squeeze() * self.total_volume
         # Safety clip: re-normalise if floating-point drift breaks the sum
@@ -427,7 +435,7 @@ class SOCM_BOLCB(SOCM_BO):
 class SOCM_LLM:
     """
     Single-objective LLM optimizer for RGB colour mixing: minimise RMSE vs a
-    target colour. Suggests the next ``(R_vol, G_vol, B_vol)`` via OpenRouter.
+    target colour. Suggests the next ``(R_vol, G_vol, B_vol, water_vol)`` via OpenRouter.
 
     Args:
         model: OpenRouter model identifier (e.g. ``OPENROUTER_MODELS["gpt-4o"]``).
@@ -471,7 +479,7 @@ class SOCM_LLM:
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
         )
 
-        # Each entry: {"iteration": int, "volumes": [R,G,B], "rgb": (R,G,B), "rmse": float}
+        # Each entry: {"iteration": int, "volumes": [R,G,B,water], "rgb": (R,G,B), "rmse": float}
         self._history: list[dict] = []
 
     def observe(
@@ -481,6 +489,11 @@ class SOCM_LLM:
         rmse: float,
     ) -> None:
         """Record one iteration: volumes used, measured mixed RGB, and RMSE."""
+        if len(volumes) == 3:
+            inferred_water = self.total_volume - sum(float(v) for v in volumes)
+            volumes = [*volumes, inferred_water]
+        if len(volumes) != 4:
+            raise ValueError(f"Expected 4 volumes [R,G,B,water], got {len(volumes)}")
         self._history.append({
             "iteration": len(self._history) + 1,
             "volumes": volumes,
@@ -490,7 +503,8 @@ class SOCM_LLM:
 
     def suggest(self) -> list[float]:
         """
-        Ask the LLM for the next ``(R_vol, G_vol, B_vol)`` in µL (sum = ``total_volume``).
+        Ask the LLM for the next ``(R_vol, G_vol, B_vol, water_vol)`` in µL
+        (sum = ``total_volume``).
         """
         if not self._history:
             raise RuntimeError("No observations recorded. Call observe() first.")
@@ -519,26 +533,29 @@ class SOCM_LLM:
             "",
             "You are helping optimize an RGB colour mixing experiment.",
             f"- Target colour (R, G, B): ({r_t}, {g_t}, {b_t})",
-            f"- Total volume per well: {self.total_volume} µL (R_vol + G_vol + B_vol must equal this)",
+            (
+                f"- Total volume per well: {self.total_volume} µL "
+                "(R_vol + G_vol + B_vol + water_vol must equal this)"
+            ),
             "",
             "## History",
-            "| Iteration | R_vol (µL) | G_vol (µL) | B_vol (µL) | Mixed RGB | RMSE |",
-            "|-----------|------------|------------|------------|-----------|------|",
+            "| Iteration | R_vol (µL) | G_vol (µL) | B_vol (µL) | water_vol (µL) | Mixed RGB | RMSE |",
+            "|-----------|------------|------------|------------|----------------|-----------|------|",
         ]
         for e in self._history:
-            r, g, b = e["volumes"]
+            r, g, b, w = e["volumes"]
             mr, mg, mb = e["rgb"]
             lines.append(
-                f"| {e['iteration']} | {r:.1f} | {g:.1f} | {b:.1f} "
+                f"| {e['iteration']} | {r:.1f} | {g:.1f} | {b:.1f} | {w:.1f} "
                 f"| ({mr}, {mg}, {mb}) | {e['rmse']:.4f} |"
             )
         lines += [
             "",
             "## What to return",
-            "Suggest the next (R_vol, G_vol, B_vol) in µL that you expect will **reduce RMSE**.",
+            "Suggest the next (R_vol, G_vol, B_vol, water_vol) in µL that you expect will **reduce RMSE**.",
             f"Volumes must sum to exactly {self.total_volume} µL (±1 µL).",
             "Reply with JSON only, no markdown fences or extra text:",
-            '{"R_vol": <number>, "G_vol": <number>, "B_vol": <number>}',
+            '{"R_vol": <number>, "G_vol": <number>, "B_vol": <number>, "water_vol": <number>}',
         ]
         if validation_error:
             lines += [
@@ -574,7 +591,7 @@ class SOCM_LLM:
             response: Raw model response, expected to contain JSON.
 
         Returns:
-            [R_vol, G_vol, B_vol] in µL.
+            [R_vol, G_vol, B_vol, water_vol] in µL.
 
         Raises:
             json.JSONDecodeError: If the response is not valid JSON.
@@ -584,15 +601,20 @@ class SOCM_LLM:
         cleaned = _extract_first_json_object_text(response)
         data = json.loads(cleaned)
         if not isinstance(data, dict):
-            raise ValueError("Expected a JSON object with R_vol, G_vol, and B_vol.")
-        r, g, b = float(data["R_vol"]), float(data["G_vol"]), float(data["B_vol"])
-
-        if abs(r + g + b - self.total_volume) > 1.0:
             raise ValueError(
-                f"Volumes sum to {r + g + b:.2f} µL, expected {self.total_volume} µL (±1 µL)."
+                "Expected a JSON object with R_vol, G_vol, B_vol, and water_vol."
+            )
+        r = float(data["R_vol"])
+        g = float(data["G_vol"])
+        b = float(data["B_vol"])
+        w = float(data["water_vol"])
+
+        if abs(r + g + b + w - self.total_volume) > 1.0:
+            raise ValueError(
+                f"Volumes sum to {r + g + b + w:.2f} µL, expected {self.total_volume} µL (±1 µL)."
             )
 
-        return [r, g, b]
+        return [r, g, b, w]
 
 
 LLMOptimizer = SOCM_LLM

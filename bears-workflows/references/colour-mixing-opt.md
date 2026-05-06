@@ -70,7 +70,7 @@ Collect all of the following before starting. Do not proceed until every value i
 | Sample name | User-provided sample name to use in saved image filenames |
 | Target colour source | Choose either `manual_rgb` or `measured_target_mix` |
 | Target colour — if `manual_rgb` | `(R, G, B)` where each value is 0–255 |
-| Target mix volumes — if `measured_target_mix` | One `(R_vol, G_vol, B_vol)` set in µL to dispense, capture, process, and use as the target RGB |
+| Target mix volumes — if `measured_target_mix` | One `(R_vol, G_vol, B_vol, water_vol)` set in µL to dispense, capture, process, and use as the target RGB |
 | Target mix volume well — if `measured_target_mix` | Mapping of the target mix volume set to the destination well, for example `(100, 100, 100) µL -> C1` |
 | Target mix destination well — if `measured_target_mix` | Well used for the target-mix calibration run; this target well is not an optimization seed well |
 | Total well volume | Total volume in µL per well (e.g. 300 µL) |
@@ -104,10 +104,10 @@ For `manual_rgb`:
 - Use this RGB tuple directly as `(R_target, G_target, B_target)`.
 
 For `measured_target_mix`:
-- Ask for one target mix volume set `(R_vol, G_vol, B_vol)` in µL.
-- Validate that the target mix volumes sum to `total_volume` (±1 µL tolerance).
+- Ask for one target mix volume set `(R_vol, G_vol, B_vol, water_vol)` in µL.
+- Validate that the target mix volumes sum to `total_volume` (±1 µL tolerance): `R+G+B+water=total_volume`.
 - Ask for the destination well used for this target-mix calibration run.
-- Record the target mix volume well mapping explicitly, for example `(R_vol, G_vol, B_vol) -> target_well`.
+- Record the target mix volume well mapping explicitly, for example `(R_vol, G_vol, B_vol, water_vol) -> target_well`.
 - Generate a standalone protocol that dispenses only this target mix.
 - Execute the protocol, then capture one whole-wellplate image.
 - Run `run_pipeline(image_path, well_ids=[target_well], config=DEFAULT_CONFIG)`.
@@ -119,7 +119,7 @@ After deriving the measured target RGB, record it as the target colour and conti
 
 **`x_init` — Initial volume inputs**
 
-Ask the user to provide exactly 3 initial volume combinations for R, G, B dye in µL. Each set must sum to the total well volume.
+Ask the user to provide exactly 3 initial volume combinations for R, G, B, and water in µL. Each set must sum to the total well volume.
 Validate each set before generating the protocol — reject and re-ask if any set does not sum to `total_volume` (±1 µL tolerance).
 
 Ask the user to choose exactly 3 destination wells for `x_init`, one well for each initial volume combination.
@@ -154,7 +154,7 @@ Do not generate the `x_init` protocol until the user confirms that the full setu
 If `measured_target_mix` is selected, the target-mix calibration protocol may be generated and executed only after the user confirms the target-mix setup. After the target image is processed successfully, continue directly to `x_init` using the measured target RGB.
 
 **Step 2 — Initial mixes (`x_init`)**
-Generate a single protocol that dispenses all 3 initial volume combinations into the 3 user-selected `x_init` destination wells and execute it on the Opentrons. Record which confirmed well received which `(R_vol, G_vol, B_vol)` set.
+Generate a single protocol that dispenses all 3 initial volume combinations into the 3 user-selected `x_init` destination wells and execute it on the Opentrons. Record which confirmed well received which `(R_vol, G_vol, B_vol, water_vol)` set.
 
 If `measured_target_mix` used a well in the same destination plate, reserve that target well and do not reuse it for `x_init` or later optimization wells unless the user explicitly confirms the plate has been cleared or replaced.
 
@@ -233,7 +233,7 @@ Pass all `(volume_ratios, RMSE)` pairs (one per active well) to the chosen optim
 - **LLM**: provide the full list of `(ratios, RGB, RMSE)` for all 3 initial mixes and request the next suggestion
 
 **Step 9 — New volume ratio suggestion**
-The optimizer returns the next `(R_vol, G_vol, B_vol)` to try.
+The optimizer returns the next `(R_vol, G_vol, B_vol, water_vol)` to try.
 
 **Step 10 — Iteration report**
 For each new set of optimization, create a new report file named `colour-mixing-report-<sample name that user input>.md`. Defer to the **puda-report** skill only for the save path / output folder — the filename above and the markdown layout described below in this document are authoritative (puda-report decides **where** the file is written, not **how** it is written). Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
@@ -261,7 +261,7 @@ Example target calibration log block:
 | Target colour source | measured_target_mix |
 | Image saved | colour-RGB-<Sample name that user input>-<N>.jpg |
 | Target well | <target_well> |
-| Target mix volume ratio (R, G, B µL) | (<R_vol>, <G_vol>, <B_vol>) |
+| Target mix volume ratio (R, G, B, water µL) | (<R_vol>, <G_vol>, <B_vol>, <water_vol>) |
 | Measured target colour RGB | (<R_target>, <G_target>, <B_target>) |
 ```
 
@@ -277,7 +277,7 @@ Example `x_init` log block:
 
 ### Wells processed in x_init 1
 
-| Well | Volume ratio (R, G, B µL) | Mixed colour RGB | RMSE |
+| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | RMSE |
 |---|---|---|---|
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
@@ -290,12 +290,12 @@ Example `x_init` log block:
 | Iteration | <N> |
 | Image saved | colour-RGB-<Sample name that user input>-<N>.jpg |
 | Target colour RGB | (<R_target>, <G_target>, <B_target>) |
-| Next suggested ratio (R, G, B) | (<R_next> µL, <G_next> µL, <B_next> µL) |
+| Next suggested ratio (R, G, B, water) | (<R_next> µL, <G_next> µL, <B_next> µL, <water_next> µL) |
 | Stop condition reached | Yes / No |
 
 ### Wells processed this iteration
 
-| Well | Volume ratio (R, G, B µL) | Mixed colour RGB | RMSE |
+| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | RMSE |
 |---|---|---|---|
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```

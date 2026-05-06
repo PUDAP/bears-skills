@@ -1,5 +1,10 @@
 """
-RMSE calculation between a mixed colour and a target colour in RGB space.
+RMSE helpers for colour-mixing optimization.
+
+Note:
+    In the RGBy workflow the optimizer suggests 4D volumes
+    ``(R_vol, G_vol, B_vol, water_vol)``, but RMSE is still computed in RGB
+    colour space from measured camera output.
 """
 
 import math
@@ -50,6 +55,39 @@ def stop_condition_reached(
     if iteration >= max_iterations:
         return True, f"Reached maximum iterations ({max_iterations})"
     return False, ""
+
+
+def validate_rgby_volumes(
+    volumes: tuple[float, float, float, float] | list[float],
+    total_volume: float,
+    *,
+    tolerance_ul: float = 1.0,
+) -> tuple[bool, str]:
+    """
+    Validate an RGBy volume vector against total-volume constraint.
+
+    Args:
+        volumes: (R_vol, G_vol, B_vol, water_vol) in µL.
+        total_volume: Expected total volume in µL.
+        tolerance_ul: Allowed absolute sum error in µL.
+
+    Returns:
+        (is_valid, reason). reason is empty when valid.
+    """
+    if len(volumes) != 4:
+        return False, f"Expected 4 volumes (R,G,B,water), got {len(volumes)}"
+
+    total = float(sum(volumes))
+    if abs(total - total_volume) > tolerance_ul:
+        return False, (
+            f"Volumes sum to {total:.2f} µL, expected {total_volume:.2f} µL "
+            f"(±{tolerance_ul:.2f} µL)"
+        )
+
+    if any(float(v) < 0 for v in volumes):
+        return False, "Volumes must be non-negative."
+
+    return True, ""
 
 
 if __name__ == "__main__":
