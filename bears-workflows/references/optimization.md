@@ -1,6 +1,6 @@
 ---
 name: colour-mixing-optimization-methods
-description: BO and LLM optimization approaches for colour mixing RMSE minimization and viscosity transfer-error minimization.
+description: BO and LLM optimization approaches for colour mixing Delta E 2000 minimization and viscosity transfer-error minimization.
 ---
 
 # Optimization Methods
@@ -17,14 +17,14 @@ description: BO and LLM optimization approaches for colour mixing RMSE minimizat
 | Class | Acquisition | When to use |
 |---|---|---|
 | `SOCM_BOEI` | `LogExpectedImprovement` (EI) | Default; balances exploration and exploitation; `xi` tunes the exploration bonus (default `0.01`) |
-| `SOCM_BOLCB` | `UpperConfidenceBound` (LCB) | More explorative; useful when the RMSE landscape is uncertain or noisy |
+| `SOCM_BOLCB` | `UpperConfidenceBound` (LCB) | More explorative; useful when the Delta E 2000 landscape is uncertain or noisy |
 
 Ask the user which class to use before initializing.
 
 **Setup**:
 - Search space: `R_vol`, `G_vol`, `B_vol`, `water_vol` in µL, normalised to `[0, 1]` internally
 - **Equality constraint**: `x1 + x2 + x3 + x4 = 1` (normalised) — passed directly to `optimize_acqf` via `equality_constraints`; maps to `R_vol + G_vol + B_vol + water_vol = total_volume` in µL
-- Objective: minimize RMSE (negated internally — botorch maximises)
+- Objective: minimize Delta E 2000 (negated internally — botorch maximises)
 - Surrogate: `SingleTaskGP` with Matérn 5/2 kernel, refit after every observation
 
 **Usage**:
@@ -39,8 +39,8 @@ optimizer = SOCM_BOEI(total_volume=300.0, xi=0.05)  # more explorative
 optimizer = SOCM_BOLCB(total_volume=300.0, beta=2.0)
 
 # Seed with x_init results
-for volumes, rmse in x_init_results:
-    optimizer.observe(volumes, rmse)
+for volumes, delta_e_2000 in x_init_results:
+    optimizer.observe(volumes, delta_e_2000)
 
 # Get next suggestion each iteration
 next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
@@ -55,7 +55,7 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 **Provider**: OpenRouter (`https://openrouter.ai/api/v1`)  
 **API key**: set as environment variable `OPENROUTER_API_KEY`
 
-**Class**: `SOCM_LLM` (alias: `LLMOptimizer`) — single objective (RMSE).
+**Class**: `SOCM_LLM` (alias: `LLMOptimizer`) — single objective (Delta E 2000).
 
 Ask the user which model to use before initializing. Do not assume a default.
 
@@ -95,8 +95,8 @@ optimizer = LLMOptimizer(
 )
 
 # Seed with x_init results
-for volumes, rgb, rmse in x_init_results:
-    optimizer.observe(volumes, rgb, rmse)
+for volumes, rgb, delta_e_2000 in x_init_results:
+    optimizer.observe(volumes, rgb, delta_e_2000)
 
 # Get next suggestion each iteration
 next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL

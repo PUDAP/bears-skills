@@ -1,11 +1,11 @@
 """
-Optimizers for colour mixing RMSE minimization and viscosity (transfer error) minimization.
+Optimizers for colour mixing Delta E 2000 minimization and viscosity (transfer error) minimization.
 
 Colour mixing:
     SOCM_BO      — abstract base: GP fitting, normalisation, volume constraint
     SOCM_BOEI    — Bayesian Optimization with Expected Improvement (LogEI)
     SOCM_BOLCB   — Bayesian Optimization with Lower Confidence Bound (UCB)
-    SOCM_LLM — LLM (single objective: RMSE)
+    SOCM_LLM — LLM (single objective: Delta E 2000)
     LLMOptimizer     — alias for SOCM_LLM
 
 Viscosity — single-objective (SOVH), box-bounded parameters:
@@ -165,12 +165,12 @@ class SOCM_BO(ABC):
     """
     Abstract base class for Bayesian Optimization of RGBy colour mixing volumes.
 
-    Maintains a running history of (volume_ratios, RMSE) observations, refits a
+    Maintains a running history of (volume_ratios, Delta E 2000) observations, refits a
     SingleTaskGP surrogate after each observation, and suggests the next
-    (R_vol, G_vol, B_vol, water_vol) expected to reduce RMSE.
+    (R_vol, G_vol, B_vol, water_vol) expected to reduce Delta E 2000.
 
     Inputs are normalised to [0, 1] per dimension so that the equality constraint
-    x1 + x2 + x3 + x4 = 1 is enforced directly in the optimisation. RMSE is negated
+    x1 + x2 + x3 + x4 = 1 is enforced directly in the optimisation. Delta E 2000 is negated
     because botorch maximises the acquisition function.
 
     Equality constraint: x1 + x2 + x3 + x4 = 1  (normalised space)
@@ -208,19 +208,19 @@ class SOCM_BO(ABC):
         self._bounds[1] = 1.0
 
         self._train_X: list[list[float]] = []  # normalised inputs
-        self._train_Y: list[float] = []         # negated RMSE
+        self._train_Y: list[float] = []         # negated Delta E 2000
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def observe(self, volumes: list[float], rmse: float) -> None:
+    def observe(self, volumes: list[float], delta_e_2000: float) -> None:
         """
         Record a new observation.
 
         Args:
             volumes: [R_vol, G_vol, B_vol, water_vol] in µL from the last protocol run.
-            rmse: Measured RMSE for those volumes.
+            delta_e_2000: Measured Delta E 2000 for those volumes.
         """
         if len(volumes) == 3:
             # Backward compatibility with older RGB-only observations.
@@ -231,7 +231,7 @@ class SOCM_BO(ABC):
                 f"Expected {self.N_DIMS} volumes [R,G,B,water], got {len(volumes)}"
             )
         self._train_X.append([v / self.total_volume for v in volumes])
-        self._train_Y.append(-rmse)
+        self._train_Y.append(-delta_e_2000)
 
     def suggest(self) -> list[float]:
         """
@@ -282,7 +282,7 @@ class SOCM_BO(ABC):
 
         Args:
             train_X: Normalised input tensor, shape (n, 4).
-            train_Y: Negated RMSE tensor, shape (n, 1).
+            train_Y: Negated Delta E 2000 tensor, shape (n, 1).
 
         Returns:
             Fitted SingleTaskGP.
@@ -340,8 +340,8 @@ class SOCM_BOEI(SOCM_BO):
 
     Example:
         optimizer = SOCM_BOEI(total_volume=300.0, xi=0.01)
-        for volumes, rmse in x_init_results:
-            optimizer.observe(volumes, rmse)
+        for volumes, delta_e_2000 in x_init_results:
+            optimizer.observe(volumes, delta_e_2000)
         next_volumes = optimizer.suggest()
     """
 
@@ -370,7 +370,7 @@ class SOCM_BOEI(SOCM_BO):
 
         Args:
             model: Fitted SingleTaskGP surrogate.
-            train_Y: Negated RMSE observations, shape (n, 1).
+            train_Y: Negated Delta E 2000 observations, shape (n, 1).
 
         Returns:
             LogExpectedImprovement acquisition function.
@@ -386,7 +386,7 @@ class SOCM_BOLCB(SOCM_BO):
     """
     Bayesian Optimizer using Lower Confidence Bound (UCB) acquisition.
 
-    More explorative than EI — useful when the RMSE landscape is uncertain or noisy.
+    More explorative than EI — useful when the Delta E 2000 landscape is uncertain or noisy.
     Higher beta increases exploration; lower beta increases exploitation.
 
     Args:
@@ -397,8 +397,8 @@ class SOCM_BOLCB(SOCM_BO):
 
     Example:
         optimizer = SOCM_BOLCB(total_volume=300.0, beta=1.0)
-        for volumes, rmse in x_init_results:
-            optimizer.observe(volumes, rmse)
+        for volumes, delta_e_2000 in x_init_results:
+            optimizer.observe(volumes, delta_e_2000)
         next_volumes = optimizer.suggest()
     """
 
@@ -420,7 +420,7 @@ class SOCM_BOLCB(SOCM_BO):
 
         Args:
             model: Fitted SingleTaskGP surrogate.
-            train_Y: Negated RMSE observations (unused — UCB does not need best_f).
+            train_Y: Negated Delta E 2000 observations (unused — UCB does not need best_f).
 
         Returns:
             UpperConfidenceBound acquisition function.
@@ -429,12 +429,12 @@ class SOCM_BOLCB(SOCM_BO):
 
 
 # ---------------------------------------------------------------------------
-# Colour mixing — LLM (single objective: minimise RMSE)
+# Colour mixing — LLM (single objective: minimise Delta E 2000)
 # ---------------------------------------------------------------------------
 
 class SOCM_LLM:
     """
-    Single-objective LLM optimizer for RGB colour mixing: minimise RMSE vs a
+    Single-objective LLM optimizer for RGB colour mixing: minimise Delta E 2000 vs a
     target colour. Suggests the next ``(R_vol, G_vol, B_vol, water_vol)`` via OpenRouter.
 
     Args:
@@ -450,8 +450,8 @@ class SOCM_LLM:
             target_colour=(180, 60, 40),
             total_volume=300.0,
         )
-        for volumes, rgb, rmse in x_init_results:
-            optimizer.observe(volumes, rgb, rmse)
+        for volumes, rgb, delta_e_2000 in x_init_results:
+            optimizer.observe(volumes, rgb, delta_e_2000)
         next_volumes = optimizer.suggest()
     """
 
@@ -479,16 +479,16 @@ class SOCM_LLM:
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
         )
 
-        # Each entry: {"iteration": int, "volumes": [R,G,B,water], "rgb": (R,G,B), "rmse": float}
+        # Each entry: {"iteration": int, "volumes": [R,G,B,water], "rgb": (R,G,B), "delta_e_2000": float}
         self._history: list[dict] = []
 
     def observe(
         self,
         volumes: list[float],
         mixed_rgb: tuple[int, int, int],
-        rmse: float,
+        delta_e_2000: float,
     ) -> None:
-        """Record one iteration: volumes used, measured mixed RGB, and RMSE."""
+        """Record one iteration: volumes used, measured mixed RGB, and Delta E 2000."""
         if len(volumes) == 3:
             inferred_water = self.total_volume - sum(float(v) for v in volumes)
             volumes = [*volumes, inferred_water]
@@ -498,7 +498,7 @@ class SOCM_LLM:
             "iteration": len(self._history) + 1,
             "volumes": volumes,
             "rgb": mixed_rgb,
-            "rmse": rmse,
+            "delta_e_2000": delta_e_2000,
         })
 
     def suggest(self) -> list[float]:
@@ -529,7 +529,7 @@ class SOCM_LLM:
     def _build_prompt(self, *, validation_error: str | None = None) -> str:
         r_t, g_t, b_t = self.target_colour
         lines = [
-            "# RGB colour mixing optimization (single objective: RMSE)",
+            "# RGB colour mixing optimization (single objective: Delta E 2000)",
             "",
             "You are helping optimize an RGB colour mixing experiment.",
             f"- Target colour (R, G, B): ({r_t}, {g_t}, {b_t})",
@@ -539,20 +539,20 @@ class SOCM_LLM:
             ),
             "",
             "## History",
-            "| Iteration | R_vol (µL) | G_vol (µL) | B_vol (µL) | water_vol (µL) | Mixed RGB | RMSE |",
-            "|-----------|------------|------------|------------|----------------|-----------|------|",
+            "| Iteration | R_vol (µL) | G_vol (µL) | B_vol (µL) | water_vol (µL) | Mixed RGB | Delta E 2000 |",
+            "|-----------|------------|------------|------------|----------------|-----------|--------------|",
         ]
         for e in self._history:
             r, g, b, w = e["volumes"]
             mr, mg, mb = e["rgb"]
             lines.append(
                 f"| {e['iteration']} | {r:.1f} | {g:.1f} | {b:.1f} | {w:.1f} "
-                f"| ({mr}, {mg}, {mb}) | {e['rmse']:.4f} |"
+                f"| ({mr}, {mg}, {mb}) | {e['delta_e_2000']:.4f} |"
             )
         lines += [
             "",
             "## What to return",
-            "Suggest the next (R_vol, G_vol, B_vol, water_vol) in µL that you expect will **reduce RMSE**.",
+            "Suggest the next (R_vol, G_vol, B_vol, water_vol) in µL that you expect will **reduce Delta E 2000**.",
             f"Volumes must sum to exactly {self.total_volume} µL (±1 µL).",
             "Reply with JSON only, no markdown fences or extra text:",
             '{"R_vol": <number>, "G_vol": <number>, "B_vol": <number>, "water_vol": <number>}',

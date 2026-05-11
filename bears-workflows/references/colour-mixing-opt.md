@@ -1,11 +1,11 @@
 ---
 name: colour-mixing-opt
-description: Iteratively mix RGB colours on an Opentrons OT-2 and minimize RMSE between the mixed colour and a target colour using real-time camera feedback and BO or LLM optimization.
+description: Iteratively mix RGB colours on an Opentrons OT-2 and minimize Delta E 2000 error between the mixed colour and a target colour using real-time camera feedback and BO or LLM optimization.
 ---
 
 # Colour Mixing Optimization
 
-description: Iteratively mix RGB colours on an Opentrons OT-2 and minimize RMSE between the mixed colour and a target colour using real-time camera feedback and BO or LLM optimization.
+description: Iteratively mix RGB colours on an Opentrons OT-2 and minimize Delta E 2000 error between the mixed colour and a target colour using real-time camera feedback and BO or LLM optimization.
 
 ## Required Skills
 
@@ -80,7 +80,6 @@ Collect all of the following before starting. Do not proceed until every value i
 | `x_init` — 3 initial mixes | User-provided volume sets (see below) |
 | `x_init` destination wells | Three user-selected destination wells, one for each `x_init` mix |
 | Optimization approach | BO (EI or LCB) or LLM (choose model) |
-| RMSE threshold | Stop when RMSE ≤ this value |
 | Maximum iterations | Stop after this many iterations |
 
 **Critical — RGB dye labware are three separate deck positions**
@@ -111,7 +110,7 @@ For `measured_target_mix`:
 - Generate a standalone protocol that dispenses only this target mix.
 - Execute the protocol, then capture one whole-wellplate image.
 - Run `run_pipeline(image_path, well_ids=[target_well], config=DEFAULT_CONFIG)`.
-- Use the measured median RGB from `target_well` as `(R_target, G_target, B_target)` for all later RMSE calculations.
+- Use the measured median RGB from `target_well` as `(R_target, G_target, B_target)` for all later Delta E 2000 calculations.
 - Do not include the target-mix calibration well in `x_init` observations or optimizer history.
 - If protocol execution, image capture, or image processing fails, stop before generating `x_init` and require recovery.
 
@@ -145,7 +144,6 @@ The confirmation summary must include:
 - All 3 `x_init` volume combinations
 - All 3 `x_init` destination wells and their mapping to the initial volume combinations
 - Optimization approach
-- RMSE threshold
 - Maximum iterations
 
 
@@ -220,17 +218,15 @@ Compute the median RGB for each extracted ROI patch. Then select the RGB values 
 - User-selected `x_init 2` well → `(R_mix_2, G_mix_2, B_mix_2)`
 - User-selected `x_init 3` well → `(R_mix_3, G_mix_3, B_mix_3)`
 
-**Step 7 — RMSE calculation**
-Compute RMSE for each well that received a mix:
-```
-RMSE = sqrt(((R_mix - R_target)² + (G_mix - G_target)² + (B_mix - B_target)²) / 3)
-```
-Use [../scripts/rmse.py](../scripts/rmse.py). For the 3 initial mixes this produces `RMSE_1`, `RMSE_2`, `RMSE_3`.
+**Step 7 — Delta E 2000 calculation**
+Compute Delta E 2000 for each well that received a mix.
+Use [../scripts/metric.py](../scripts/metric.py) and `calculate_delta_e_2000((R_mix, G_mix, B_mix), (R_target, G_target, B_target))`.
+For the 3 initial mixes this produces `DeltaE_1`, `DeltaE_2`, `DeltaE_3`.
 
 **Step 8 — Optimizer feedback**
-Pass all `(volume_ratios, RMSE)` pairs (one per active well) to the chosen optimizer:
-- **BO**: seed the surrogate model with all 3 initial `(ratio, RMSE)` observations
-- **LLM**: provide the full list of `(ratios, RGB, RMSE)` for all 3 initial mixes and request the next suggestion
+Pass all `(volume_ratios, Delta E 2000)` pairs (one per active well) to the chosen optimizer:
+- **BO**: seed the surrogate model with all 3 initial `(ratio, Delta E 2000)` observations
+- **LLM**: provide the full list of `(ratios, RGB, Delta E 2000)` for all 3 initial mixes and request the next suggestion
 
 **Step 9 — New volume ratio suggestion**
 The optimizer returns the next `(R_vol, G_vol, B_vol, water_vol)` to try.
@@ -241,7 +237,7 @@ For each new set of optimization, create a new report file named `colour-mixing-
 Each `x_init` log block must record:
 - Which seed run it is: `x_init 1`, `x_init 2`, or `x_init 3`
 - The user-selected destination well for that seed run
-- RMSE for that initial mix only
+- Delta E 2000 for that initial mix only
 - The volume ratio and measured RGB value for that initial mix only
 
 If `measured_target_mix` was used, the report must also record a target calibration block before the `x_init` blocks:
@@ -277,7 +273,7 @@ Example `x_init` log block:
 
 ### Wells processed in x_init 1
 
-| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | RMSE |
+| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Delta E 2000 |
 |---|---|---|---|
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
@@ -295,7 +291,7 @@ Example `x_init` log block:
 
 ### Wells processed this iteration
 
-| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | RMSE |
+| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Delta E 2000 |
 |---|---|---|---|
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
@@ -309,18 +305,17 @@ Use **puda-protocol** to generate a new protocol with the suggested volumes and 
 
 ### Phase 3 — Stop Condition
 
-Stop when **either** is met:
+Stop only when this is met:
 
 | Condition | Description |
 |---|---|
-| `RMSE ≤ threshold` | Target colour matched within acceptable error |
 | `iteration ≥ max_iter` | Maximum optimization iterations reached (not counting the 3 `x_init` mixes) |
 
 On stop: generate a final summary report using the markdown structure defined in this document, and write it to `colour-mixing-report-<sample name that user input>.md` at the save path resolved by the **puda-report** skill.
 
 ## Rules
 
-- Always ask for target colour source, RMSE threshold, and max iterations **before** starting.
+- Always ask for target colour source and max iterations **before** starting.
 - If target colour source is `manual_rgb`, validate and use the user-provided target RGB.
 - If target colour source is `measured_target_mix`, run the target-mix calibration, process the target well image, and use the measured RGB as the target before generating `x_init`.
 - Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
