@@ -104,6 +104,27 @@ Before command generation:
 - Run `puda machine commands opentrons` to understand available commands
 - Follow all command types, params, sequencing rules, and labware constraints in `references/opentrons-machine.md`
 
+### Elephant Machine (`machine_id: "elephant"`)
+
+Use for **6-axis robot arm manipulation, Cartesian/joint motion, gripper actions, and Pi-camera capture**.
+
+Capabilities:
+- Cartesian pose motion and relative moves
+- Joint-angle and single-axis motion controls
+- Scan/home-like positioning and reset-oriented workflows
+- Electric gripper operations (open/close/init)
+- Pi-camera image capture for visual checks/CV workflows
+
+Use this machine when:
+- The task requires a robot arm to move to coordinates or execute pick-and-place style steps
+- The user asks for Elephant arm motion, gripper control, or scan/reset behavior
+- The workflow includes Pi-camera captures from the Elephant setup
+
+Before command generation:
+- Refer to: [elephant-machine](references/elephant.md)
+- Run `puda machine commands elephant` to understand available commands
+- Follow constraints and sequencing in `references/elephant.md`
+
 
 ## Selection Workflow
 
