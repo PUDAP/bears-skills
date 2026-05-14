@@ -21,17 +21,17 @@ Do **not** assume.
 Use for **iterative RGB colour mixing to match a target colour via Delta E 2000 minimization**.
 
 Capabilities:
-- Automated liquid handling on Opentrons OT-2 to mix R, G, B dye volumes
+- Automated liquid handling on Opentrons OT-2 to mix R, G, B dye and water volumes
 - Camera capture of mixed colour after each dispensing step
 - VLM-based image processing and ROI extraction for per-well RGB measurement
 - Delta E 2000 calculation between mixed and target colour
-- Bayesian Optimization (BO) or LLM-driven suggestion of next volume ratios
+- Bayesian Optimization (BO) or LLM-driven suggestion of next four-component `(R, G, B, water)` volume ratios
 - Iterative protocol generation and execution until maximum iterations is reached
 - Per-iteration report generation (volumes, RGB, Delta E 2000, next suggestion)
 
 Use this experiment when:
 - The user wants to mix colours to match a target RGB
-- The task involves optimizing volume ratios of dyes to minimize colour error
+- The task involves optimizing red, green, blue, and water volume ratios to minimize colour error
 - The user mentions colour mixing, Delta E 2000, BO, or LLM-guided liquid handling
 
 Runner script: [`scripts/run_colour_mixing.py`](scripts/run_colour_mixing.py)
@@ -107,4 +107,5 @@ When answering experiment-selection questions:
 9. For viscosity optimization, use balance readings as `mass_mg`, process data with `scripts/balance_data_process.py`, and pick up tips sequentially from `A1`, `A2`, `A3`, `A4`, then row-major through the rack.
 10. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 11. Opentrons protocols must always end with no tip attached to any pipette.
-12. **Ask user if unsure — do not assume**.
+12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.
+13. **Ask user if unsure — do not assume**.

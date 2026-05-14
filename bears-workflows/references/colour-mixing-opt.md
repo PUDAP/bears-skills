@@ -25,6 +25,7 @@ At any time:
 - Only **One active run** is allowed 
 - Each iteration sues a **NEW run_id**
 -No downstream step executres unless the run is **confirmed successful**
+- Every mix must contain four explicitly specified components: **red, green, blue, and water**. Never generate a colour-mixing protocol from only R, G, and B volumes.
 
 ## Optimization Approaches
 
@@ -32,8 +33,8 @@ Ask the user which approach to use if not specified:
 
 | Approach | When to use |
 |---|---|
-| **Bayesian Optimization (BO)** | Efficient for continuous volume ratios; fewer iterations to converge |
-| **LLM** | Flexible reasoning; good when constraints or colour theory context matters |
+| **Bayesian Optimization (BO)** | Efficient for continuous four-component `(R, G, B, water)` volume ratios; fewer iterations to converge |
+| **LLM** | Flexible reasoning; good when constraints or colour theory context matters, but suggestions must still include `(R, G, B, water)` |
 
 See [optimization.md](optimization.md) for implementation details.
 
@@ -71,22 +72,23 @@ Collect all of the following before starting. Do not proceed until every value i
 | Target colour source | Choose either `manual_rgb` or `measured_target_mix` |
 | Target colour — if `manual_rgb` | `(R, G, B)` where each value is 0–255 |
 | Target mix volumes — if `measured_target_mix` | One `(R_vol, G_vol, B_vol, water_vol)` set in µL to dispense, capture, process, and use as the target RGB |
-| Target mix volume well — if `measured_target_mix` | Mapping of the target mix volume set to the destination well, for example `(100, 100, 100) µL -> C1` |
+| Target mix volume well — if `measured_target_mix` | Mapping of the target mix volume set to the destination well, for example `(100, 100, 100, 0) µL -> C1` |
 | Target mix destination well — if `measured_target_mix` | Well used for the target-mix calibration run; this target well is not an optimization seed well |
 | Total well volume | Total volume in µL per well (e.g. 300 µL) |
 | **R dye source — deck slot** | OT-2 deck slot (`"1"`–`"11"`) for the labware holding **red** dye only |
 | **G dye source — deck slot** | Deck slot for the labware holding **green** dye only |
 | **B dye source — deck slot** | Deck slot for the labware holding **blue** dye only |
+| **Water source — deck slot** | Deck slot for the labware holding **water only** |
 | `x_init` — 3 initial mixes | User-provided volume sets (see below) |
 | `x_init` destination wells | Three user-selected destination wells, one for each `x_init` mix |
 | Optimization approach | BO (EI or LCB) or LLM (choose model) |
 | Maximum iterations | Stop after this many iterations |
 
-**Critical — RGB dye labware are three separate deck positions**
+**Critical — RGB dye labware and water source use separate deck positions**
 
-The R, G, and B dyes are loaded as **three independent `load_labware` calls** with **three separate `location` values**. You must **ask the user for each slot individually** (R, then G, then B — or present one form with three distinct fields). **Do not** ask a single question such as “which slot is the dye plate?” and reuse that answer for R, G, and B. **Do not** assume all three dye plates share the same slot.
+The R, G, and B dyes are loaded as **three independent `load_labware` calls** with **three separate `location` values**, and the water source must also have its own dedicated deck slot. You must **ask the user for each slot individually** (R, then G, then B, then water — or present one form with four distinct fields). **Do not** ask a single question such as “which slot is the dye plate?” and reuse that answer for R, G, and B. **Do not** assume all three dye plates share the same slot, and do not reuse a dye slot for water.
 
-When generating protocols, map aspirate sources to the user’s **R slot / G slot / B slot** explicitly — never copy one slot onto all three dye labware loads.
+When generating protocols, map aspirate sources to the user’s **R slot / G slot / B slot / water slot** explicitly. Each mix must aspirate from the separate **red**, **green**, **blue**, and **water** sources using the user-confirmed deck slots — never copy one slot onto all three dye labware loads or reuse a dye slot for water.
 
 **Target colour source**
 
@@ -95,7 +97,7 @@ Ask the user how the target RGB should be obtained before starting:
 | Option | Workflow |
 |---|---|
 | `manual_rgb` | Use the existing method: the user directly provides the target `(R, G, B)` values, each 0-255. |
-| `measured_target_mix` | The user provides one RGB dye volume combination. Generate and run a target-mix protocol, capture an image, process the target well, and use the measured median RGB as the target for optimization. |
+| `measured_target_mix` | The user provides one red/green/blue/water volume combination. Generate and run a target-mix protocol, capture an image, process the target well, and use the measured median RGB as the target for optimization. |
 
 For `manual_rgb`:
 - Validate that the provided target has exactly three numeric values.
@@ -120,6 +122,7 @@ After deriving the measured target RGB, record it as the target colour and conti
 
 Ask the user to provide exactly 3 initial volume combinations for R, G, B, and water in µL. Each set must sum to the total well volume.
 Validate each set before generating the protocol — reject and re-ask if any set does not sum to `total_volume` (±1 µL tolerance).
+Do not accept or auto-fill three-component `(R, G, B)` seed mixes. Water must be supplied explicitly in every `x_init` tuple.
 
 Ask the user to choose exactly 3 destination wells for `x_init`, one well for each initial volume combination.
 
@@ -138,7 +141,7 @@ The confirmation summary must include:
 - Target colour source
 - Total well volume
 - Labware positions
-- R / G / B source deck slots
+- R / G / B / water source deck slots
 - If `manual_rgb`: target colour RGB
 - If `measured_target_mix`: target mix volumes, target mix destination well, target mix volume well mapping, and planned target image filename
 - All 3 `x_init` volume combinations
@@ -152,7 +155,7 @@ Do not generate the `x_init` protocol until the user confirms that the full setu
 If `measured_target_mix` is selected, the target-mix calibration protocol may be generated and executed only after the user confirms the target-mix setup. After the target image is processed successfully, continue directly to `x_init` using the measured target RGB.
 
 **Step 2 — Initial mixes (`x_init`)**
-Generate a single protocol that dispenses all 3 initial volume combinations into the 3 user-selected `x_init` destination wells and execute it on the Opentrons. Record which confirmed well received which `(R_vol, G_vol, B_vol, water_vol)` set.
+Generate a single protocol that dispenses all 3 initial volume combinations into the 3 user-selected `x_init` destination wells and execute it on the Opentrons. Each mix must combine **red, green, blue, and water** from their respective source labware. Record which confirmed well received which `(R_vol, G_vol, B_vol, water_vol)` set.
 
 If `measured_target_mix` used a well in the same destination plate, reserve that target well and do not reuse it for `x_init` or later optimization wells unless the user explicitly confirms the plate has been cleared or replaced.
 
@@ -230,6 +233,7 @@ Pass all `(volume_ratios, Delta E 2000)` pairs (one per active well) to the chos
 
 **Step 9 — New volume ratio suggestion**
 The optimizer returns the next `(R_vol, G_vol, B_vol, water_vol)` to try.
+Validate that all four volumes are numeric, non-negative, and sum to `total_volume` (±1 µL tolerance). Reject and re-query/recompute any optimizer suggestion that omits water or returns only three dye volumes.
 
 **Step 10 — Iteration report**
 For each new set of optimization, create a new report file named `colour-mixing-report-<sample name that user input>.md`. Defer to the **puda-report** skill only for the save path / output folder — the filename above and the markdown layout described below in this document are authoritative (puda-report decides **where** the file is written, not **how** it is written). Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
@@ -275,7 +279,7 @@ Example `x_init` log block:
 
 | Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Delta E 2000 |
 |---|---|---|---|
-| <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
+| <well_id> | (<R_vol>, <G_vol>, <B_vol>, <water_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
 
 ```markdown
@@ -293,7 +297,7 @@ Example `x_init` log block:
 
 | Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Delta E 2000 |
 |---|---|---|---|
-| <well_id> | (<R_vol>, <G_vol>, <B_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
+| <well_id> | (<R_vol>, <G_vol>, <B_vol>, <water_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
 
 The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first BO/LLM-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
@@ -319,7 +323,9 @@ On stop: generate a final summary report using the markdown structure defined in
 - If target colour source is `manual_rgb`, validate and use the user-provided target RGB.
 - If target colour source is `measured_target_mix`, run the target-mix calibration, process the target well image, and use the measured RGB as the target before generating `x_init`.
 - Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
-- Always collect **three separate deck slots** for R, G, and B dye source labware before any `load_labware` for those sources; never use one slot for all three.
+- Always collect **four separate deck slots** for R, G, B, and water source labware before any `load_labware` for those sources; never use one slot for all three dyes or reuse a dye slot for water.
+- Every target mix, `x_init` mix, optimizer suggestion, generated protocol, and report row must include explicit **red, green, blue, and water** volumes.
+- Validate all `(R_vol, G_vol, B_vol, water_vol)` tuples before protocol generation: each value must be numeric and non-negative, and `R+G+B+water` must equal `total_volume` within ±1 µL.
 - Always ask the user for explicit confirmation after all required inputs are collected and validated, before the first protocol is generated or executed.
 - Never ask the user to paste API keys, tokens, passwords, or other secrets into chat.
 - If `LLM` optimization requires credentials such as `OPENROUTER_API_KEY`, require them to be pre-configured in the local environment outside the chat before running.
