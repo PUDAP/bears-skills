@@ -1,6 +1,6 @@
 ---
 name: elephant-machine
-description: Generate commands for the Elephant Pro630 robot arm, including Cartesian/joint motion, scan/reset flows, electric gripper control, Pi-camera capture, and power control.
+description: Generate commands for the Elephant Pro630 robot arm, including Cartesian/joint motion, scan/reset flows, electric gripper control, Pi-camera capture, livestream snapshot capture, and camera calibration.
 ---
 
 # Elephant Machine Skills
@@ -9,7 +9,7 @@ Generate commands for the Elephant Pro630 6-axis robot arm.
 
 ## Purpose
 
-This skill enables generation of commands for the Elephant machine in PUDA workflows. These commands automate robot-arm motion, scan positioning, gripper actions, recovery/reset flows, power control, and Pi-camera-assisted vision steps.
+This skill enables generation of commands for the Elephant machine in PUDA workflows. These commands automate robot-arm motion, scan positioning, gripper actions, recovery/reset flows, Pi-camera capture, livestream snapshot capture, and camera-assisted vision steps.
 
 ## When to Use
 
@@ -17,35 +17,21 @@ Load this skill when:
 - Users describe tasks to be executed on the Elephant robot arm
 - Converting manual pick-and-place or manipulation procedures into automated PUDA protocols
 - Processing natural language requests for robot movement, positioning, gripper actions, or recovery flows
-- Working with workflows that require Pi-camera image capture from the Elephant setup
+- Working with workflows that require Pi-camera or livestream image capture from the Elephant setup
 
 ## Required Resources
 
 **IMPORTANT**: Before generating any commands, **always consult these resources**:
 
 1. **Consult CLI**: Run `puda machine commands elephant` to review available commands and parameters
-2. **Driver Reference**: Ensure command intent matches the current Elephant driver behavior for motion, gripper, camera, and power operations
 
 **Do not generate commands without first consulting these resources** to ensure accuracy and compatibility.
 
 ## Command Structure
 
-Each Elephant command follows the standard protocol command structure. Key Elephant-specific details:
+Each Elephant command follows the standard protocol command structure (see protocol-generator reference). Key Elephant-specific details:
 
 - `machine_id`: Must be `"elephant"` (string)
-
-## Current Driver Capabilities
-
-The current Elephant driver supports these public operations:
-
-- Connection and recovery: `startup`, `disconnect`, `reconnect`
-- Power: `power_on`, `power_off`, `is_power_on`
-- Status: `is_moving`, `get_error`, `clear_error`, `get_robot_status`, `get_position`, `get_angles`, `get_coords`, `get_pose`
-- Motion: `send_angles`, `send_coords`, `send_coord`, `send_angle`, `stop`, `wait_done`, `move`, `move_relative`, `scan`
-- Gripper: `open_gripper`, `close_gripper`, `set_gripper_value`, `init_gripper`, `release_gripper`
-- Recovery and safety: `reset`, `release_all_servos`, `focus_all_servos`
-- Vision and calibration: `available_cameras`, `capture_image`, `pixel_to_robot_offset`
-- Utilities: `set_color`, `set_default_speed`
 
 ## Rules and Restrictions
 
@@ -72,7 +58,6 @@ The following rules **must** be strictly followed when generating Elephant comma
 
 - Use `scan()` to move the robot to its configured scan pose before camera capture or after recovery flows.
 - `reset()` already clears errors, restarts the robot, and moves to the configured scan position.
-- After `power_off()` or an emergency stop, use `power_on()` before resuming normal motion commands.
 
 ### Gripper Rules
 
@@ -86,9 +71,8 @@ The following rules **must** be strictly followed when generating Elephant comma
 
 ### Camera Rules
 
-- The current Elephant driver exposes **Pi camera only**.
-- `available_cameras()` should be treated as Pi-only capability.
-- Use `capture_image()` only when the workflow requires visual confirmation or CV input.
+- Use `capture_image()` or `capture_stream_image()` when the workflow requires visual confirmation or CV input.
+- Use `capture_stream_image()` for livestream snapshot capture.
 - If image-based offset correction is needed, use `pixel_to_robot_offset(...)` with a known `z_touch` and a calibrated camera setup.
 
 ### Command Dependencies and Sequencing
@@ -97,10 +81,9 @@ The following rules **must** be strictly followed when generating Elephant comma
 
 **Critical sequencing rules:**
 1. Ensure the robot is connected and powered before motion commands.
-2. After `power_off()` or emergency stop, call `power_on()` before further motion.
-3. Before electric-gripper open/close operations after a power cycle, call `init_gripper()`.
-4. Before camera-guided work, prefer moving to `scan()` first unless the workflow requires capture from another known-safe pose.
-5. If a workflow ends in an uncertain or faulted state, prefer `reset()` or `scan()` rather than leaving the arm at an arbitrary pose.
+2. Before electric-gripper open/close operations after a power cycle, call `init_gripper()`.
+3. Before camera-guided work, prefer moving to `scan()` first unless the workflow requires capture from another known-safe pose.
+4. If a workflow ends in an uncertain or faulted state, prefer `reset()` or `scan()` rather than leaving the arm at an arbitrary pose.
 
 ## Instructions
 

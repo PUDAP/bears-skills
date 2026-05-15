@@ -9,7 +9,9 @@ description: Discover PUDA machine capabilities at bears and choose the right ma
 
 Provide machine-selection and capability guidance for PUDA workflows, then load the correct machine reference before generating commands.
 
-## CritIf you are unsure which machine should be used for a command, **ask the user** before proceeding.
+## Critical Rule
+
+If you are unsure which machine should be used for a command, **ask the user** before proceeding.
 Do **not** assume.
 
 ## Machine Capabilities and When to Use
@@ -104,25 +106,25 @@ Before command generation:
 
 ### Elephant Machine (`machine_id: "elephant"`)
 
-Use for **6-axis robot arm manipulation, Cartesian/joint motion, electric gripper actions, scan/reset flows, Pi-camera vision steps, and power recovery**.
+Use for **6-axis robot arm manipulation, Cartesian/joint motion, electric gripper actions, scan/reset flows, and camera-guided vision steps**.
 
 Capabilities:
 - Cartesian pose motion and relative moves
 - Joint-angle and single-axis motion controls
 - Scan positioning and reset-oriented recovery workflows
-- Power control and post-emergency recovery with `power_on` / `power_off`
 - Electric gripper operations: `init_gripper`, `open_gripper`, `close_gripper`
-- Pi-camera image capture and pixel-to-robot offset conversion for vision-guided tasks
+- Pi-camera and livestream image capture for vision-guided tasks
+- Pixel-to-robot offset conversion for calibrated camera workflows
 
 Use this machine when:
 - The task requires a robot arm to move to coordinates or execute pick-and-place style steps
 - The user asks for Elephant arm motion, scan/reset behavior, or arm recovery after stop/power loss
-- The workflow includes gripper control or Pi-camera captures from the Elephant setup
+- The workflow includes gripper control, Pi-camera capture, or livestream snapshot capture from the Elephant setup
 
 Before command generation:
 - Refer to: [elephant-machine](references/elephant.md)
 - Run `puda machine commands elephant` to understand available commands
-- Follow motion, gripper, camera, power, and sequencing constraints in `references/elephant.md`
+- Follow motion, gripper, camera, and sequencing constraints in `references/elephant.md`
 
 ## Selection Workflow
 
@@ -143,8 +145,4 @@ When answering machine-selection questions:
 - `opentrons` deck slot (`location`) for every `load_labware` command must be explicitly confirmed by the user - **never assume a slot**.
 - `opentrons` `capture_image` must be its own standalone protocol - never combined with pipetting commands in the same protocol.
 - `balance` - always call `startup()` before reading and `shutdown()` after. Always tare before a dispense step. Always verify `fresh == True` before using a reading.
-- `elephant` - ensure the arm is connected and powered before motion. After `power_off()` or emergency stop, call `power_on()` before motion. For electric gripper workflows after a power cycle, call `init_gripper()` before `open_gripper()` or `close_gripper()`. Prefer `scan()` before Pi-camera-guided work.
-l `startup()` before reading and `shutdown()` after. Always tare before a dispense step. Always verify `fresh == True` before using a reading.
-
-p()` before reading and `shutdown()` after. Always tare before a dispense step. Always verify `fresh == True` before using a reading.
-
+- `elephant` - ensure the arm is connected and powered before motion. For electric gripper workflows after a power cycle, call `init_gripper()` before `open_gripper()` or `close_gripper()`. Prefer `scan()` before camera-guided work.
