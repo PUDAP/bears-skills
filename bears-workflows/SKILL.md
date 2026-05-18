@@ -78,6 +78,51 @@ Before running:
 - Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
 - Protocol output: generate OT-2 Python with `Protocol.to_python_code()` and save it under `reports/protocols/`
 
+### Elephant Alignment (`elephant-alignment`)
+
+Use for **aligning the Elephant Pro630 gripper over a detected target object before pickup** using Logitech CAM2 YOLO detections and the two inner tape-edge lines on the gripper.
+
+Capabilities:
+- Captures CAM2 Logitech alignment images from the local combined RAW + YOLO viewer
+- Uses YOLO-only CAM2 metadata for target and tape-marker detections
+- Computes alignment from the target object's center x-coordinate versus the center between the two inner tape edges
+- Returns left/right/no-move suggestions for human-in-the-loop correction
+- Produces a debug image showing tape edges, object center, gap center, offset, and tolerance
+
+Use this experiment when:
+- The user wants to align the Elephant gripper before descending to pick
+- The task mentions Logitech CAM2, gripper tape markers, inner tape lines, or pre-pick alignment
+- The task involves checking whether the target object is centered between gripper fingers
+
+Before running:
+- Refer to: [elephant-alignment](references/elephant/elephant-alignment.md)
+- Alignment helper script: [scripts/elephant/alignment.py](scripts/elephant/alignment.py)
+- Camera stream helper script: [scripts/elephant/camera_streams.py](scripts/elephant/camera_streams.py)
+- Related pickup workflow: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
+
+### Elephant Pickup Object (`elephant-pickup-object`)
+
+Use for **detecting, aligning, picking, lifting, and placing objects with the Elephant Pro630** using Pi camera YOLO/VLM target selection and CAM2 gripper alignment.
+
+Capabilities:
+- Starts or uses Pi camera and CAM2 camera streams for the Elephant workspace
+- Captures Pi camera top-view images for YOLO/VLM detection
+- Converts target pixel centers to robot XY using the documented Elephant affine calibration
+- Uses CAM2 alignment before final descent
+- Controls the Elephant electric gripper through `elephant_driver.Elephant`
+- Places picked objects at a configured place pose with stacked X offsets
+
+Use this experiment when:
+- The user wants the Elephant arm to pick up a described object
+- The task involves YOLO/VLM target selection, pixel-to-robot conversion, gripper closing, lifting, or placing
+- The task mentions `elephant_driver` or the Elephant Pro630 pick workflow
+
+Before running:
+- Refer to: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
+- Pickup helper script: [scripts/elephant/pickup_object.py](scripts/elephant/pickup_object.py)
+- Camera stream helper script: [scripts/elephant/camera_streams.py](scripts/elephant/camera_streams.py)
+- For pre-pick alignment details: [elephant-alignment](references/elephant/elephant-alignment.md)
+
 ---
 
 ## Selection Workflow
