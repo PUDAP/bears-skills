@@ -42,9 +42,14 @@ The gripper is aligned when `abs(offset_px) <= tolerance_px`.
 
 The Elephant workspace must use the existing camera support from `elephant_driver`:
 
-- Pi camera capture uses `elephant_driver.camera.CameraConfig` and `capture_pi_image`.
+- Pi camera capture uses `elephant_driver.camera.CameraConfig`.
+- The Pi-hosted camera server is started by `elephant_driver.camera.start_pi_camera_stream_server`.
+- Pi-hosted endpoints use `pi`, not `cam0`:
+  - `http://<PI_IP>:5000/pi`
+  - `http://<PI_IP>:5000/snapshot/pi`
 - CAM2 capture uses the CV livestream URL and `capture_snapshot` from `elephant_driver.cv`.
 - The local combined RAW + YOLO viewer is provided by the installed `elephant_driver.combined_viewer` module and is auto-started by `elephant/edge/main.py` when `ELEPHANT_START_COMBINED_VIEWER=true`.
+- The Elephant edge starts the Pi-hosted server when `ELEPHANT_START_PI_STREAM=true`; the default port is `ELEPHANT_PI_STREAM_PORT=5000`.
 
 Important viewer endpoints:
 
@@ -63,7 +68,7 @@ CAM2 YOLO image:       http://127.0.0.1:5000/snapshot/cam2_yolo
 Start the viewer with:
 
 ```bash
-python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
+python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --start-pi-stream --pi-stream-port 5000 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
 ```
 
 ## Configuration Values

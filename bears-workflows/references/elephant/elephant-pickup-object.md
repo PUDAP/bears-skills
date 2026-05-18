@@ -65,8 +65,17 @@ If VLM is used, `OPENROUTER_API_KEY` must be configured locally. Never ask the u
 
 Use the installed `elephant_driver.combined_viewer` module to expose both cameras and their YOLO overlays. The Elephant edge service starts it automatically when `ELEPHANT_START_COMBINED_VIEWER=true`. The module intentionally uses the existing `elephant_driver` camera stack:
 
-- Pi camera: `elephant_driver.camera.CameraConfig` and `capture_pi_image`
+- Pi camera: `elephant_driver.camera.CameraConfig` and `start_pi_camera_stream_server`
 - CAM2: `elephant_driver.cv.DEFAULT_STREAM_URL` and `capture_snapshot`
+
+The Pi-hosted camera server uses `pi`, not `cam0`, in its own routes:
+
+```text
+Pi-hosted raw live:    http://<PI_IP>:5000/pi
+Pi-hosted raw image:   http://<PI_IP>:5000/snapshot/pi
+```
+
+The local combined viewer then proxies that Pi stream into the routes below.
 
 Default local URLs:
 
@@ -85,7 +94,7 @@ CAM2 YOLO image:       http://127.0.0.1:5000/snapshot/cam2_yolo
 Start the viewer with:
 
 ```bash
-python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
+python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --start-pi-stream --pi-stream-port 5000 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
 ```
 
 ## Robot Constants
@@ -156,7 +165,7 @@ Important driver behavior:
 
 ## Detection Workflow
 
-1. Capture a fresh Pi camera image using the driver-backed combined viewer.
+1. Capture a fresh Pi camera image using the driver-backed combined viewer. The edge should have `ELEPHANT_START_PI_STREAM=true` so the Pi-hosted `/pi` stream is live.
 2. Prefer the local Pi camera YOLO snapshot:
 
 ```text

@@ -98,6 +98,7 @@ Before running:
 - Refer to: [yolo-alignment](references/elephant/yolo-alignment.md)
 - YOLO alignment helper script: [scripts/elephant/yolo_alignment.py](scripts/elephant/yolo_alignment.py)
 - Combined viewer module: `python -m elephant_driver.combined_viewer`
+- Pi-hosted stream routes are `/pi` and `/snapshot/pi`; local viewer routes are `/pi_camera` and `/snapshot/pi_camera`
 - Related pickup workflow: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
 
 ### Elephant Pickup Object (`elephant-pickup-object`)
@@ -121,6 +122,7 @@ Before running:
 - Refer to: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
 - Pickup helper script: [scripts/elephant/pickup_object.py](scripts/elephant/pickup_object.py)
 - Combined viewer module: `python -m elephant_driver.combined_viewer`
+- Pi-hosted stream routes are `/pi` and `/snapshot/pi`; local viewer routes are `/pi_camera` and `/snapshot/pi_camera`
 - For pre-pick alignment details: [yolo-alignment](references/elephant/yolo-alignment.md)
 
 ---
