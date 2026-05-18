@@ -23,11 +23,11 @@ Invoke these skills before generating any commands:
 ## Required References
 
 Load these before generating commands:
-- `../bears-machines/references/opentrons-machine.md`
-- `../bears-machines/references/balance-machine.md`
-- `../scripts/optimizers.py`
-- `../scripts/balance_data_process.py`
-- `../scripts/thread.py`
+- `../../../bears-machines/references/opentrons-machine.md`
+- `../../../bears-machines/references/balance-machine.md`
+- `../../scripts/optimization_workflow/optimizers.py`
+- `../../scripts/optimization_workflow/balance_data_process.py`
+- `../../scripts/optimization_workflow/thread.py`
 
 ## Optimization Approaches
 
@@ -199,7 +199,7 @@ if not m.get("fresh") or m.get("age", 999) >= 5:
 
 ```python
 import threading, time
-from thread import monitor_balance_threaded, monitor_protocol_status_threaded
+from scripts.optimization_workflow.thread import monitor_balance_threaded, monitor_protocol_status_threaded
 
 stop_event = threading.Event()
 balance_result, protocol_result = {}, {}
@@ -304,7 +304,7 @@ Non-fresh readings (`fresh == False`) are skipped automatically by the thread. I
 
 **Step 8 - Process data**
 
-Use [`../scripts/balance_data_process.py`](../scripts/balance_data_process.py):
+Use [`../../scripts/optimization_workflow/balance_data_process.py`](../../scripts/optimization_workflow/balance_data_process.py):
 - `merge_protocol_commands_with_balance_readings(...)` to label balance rows with protocol commands.
 - `analyze_viscosity_data(...)` to process the raw CSV.
 - `analyze_balance_data(...)` to compute mass/volume summary metrics when working from in-memory readings.

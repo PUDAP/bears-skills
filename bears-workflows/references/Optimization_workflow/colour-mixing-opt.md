@@ -223,7 +223,7 @@ Compute the median RGB for each extracted ROI patch. Then select the RGB values 
 
 **Step 7 — Delta E 2000 calculation**
 Compute Delta E 2000 for each well that received a mix.
-Use [../scripts/metric.py](../scripts/metric.py) and `calculate_delta_e_2000((R_mix, G_mix, B_mix), (R_target, G_target, B_target))`.
+Use [../../scripts/optimization_workflow/metric.py](../../scripts/optimization_workflow/metric.py) and `calculate_delta_e_2000((R_mix, G_mix, B_mix), (R_target, G_target, B_target))`.
 For the 3 initial mixes this produces `DeltaE_1`, `DeltaE_2`, `DeltaE_3`.
 
 **Step 8 — Optimizer feedback**

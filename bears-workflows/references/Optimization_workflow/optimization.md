@@ -9,7 +9,7 @@ description: BO and LLM optimization approaches for colour mixing Delta E 2000 m
 
 ## Colour Mixing — Bayesian Optimization (SOCM)
 
-**Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
+**Script**: [../../scripts/optimization_workflow/optimizers.py](../../scripts/optimization_workflow/optimizers.py)  
 **Library**: `botorch` + `torch` + `gpytorch` — `pip install botorch gpytorch torch openai`
 
 **Classes**:
@@ -29,7 +29,7 @@ Ask the user which class to use before initializing.
 
 **Usage**:
 ```python
-from scripts.optimizers import SOCM_BOEI, SOCM_BOLCB
+from scripts.optimization_workflow.optimizers import SOCM_BOEI, SOCM_BOLCB
 
 # EI — xi controls exploration bonus (default 0.01; higher = more explorative)
 optimizer = SOCM_BOEI(total_volume=300.0)
@@ -50,7 +50,7 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 
 ## Colour Mixing — LLM Optimization (SOCM)
 
-**Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
+**Script**: [../../scripts/optimization_workflow/optimizers.py](../../scripts/optimization_workflow/optimizers.py)  
 **Library**: `openai` — `pip install openai`  
 **Provider**: OpenRouter (`https://openrouter.ai/api/v1`)  
 **API key**: set as environment variable `OPENROUTER_API_KEY`
@@ -86,7 +86,7 @@ Ask the user which model to use before initializing. Do not assume a default.
 
 **Usage**:
 ```python
-from scripts.optimizers import LLMOptimizer, OPENROUTER_MODELS
+from scripts.optimization_workflow.optimizers import LLMOptimizer, OPENROUTER_MODELS
 
 optimizer = LLMOptimizer(
     model=OPENROUTER_MODELS["gpt-4o"],   # or any OpenRouter identifier
@@ -111,7 +111,7 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 
 ## Viscosity / Transfer Tuning — Bayesian Optimization (SOVH)
 
-**Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
+**Script**: [../../scripts/optimization_workflow/optimizers.py](../../scripts/optimization_workflow/optimizers.py)  
 **Library**: `botorch` + `torch` + `gpytorch` — `pip install botorch gpytorch torch`
 
 **Classes**:
@@ -133,7 +133,7 @@ Ask the user which class to use before initializing.
 
 **Usage**:
 ```python
-from scripts.optimizers import SOVH_EI, SOVH_LCB
+from scripts.optimization_workflow.optimizers import SOVH_EI, SOVH_LCB
 
 param_bounds = [
     ("aspiration_volume", 10.0, 1000.0),
@@ -160,7 +160,7 @@ next_params = optimizer.suggest()  # {"aspiration_volume": ...}
 
 ## Viscosity / Transfer Tuning — LLM Optimization (SOVH)
 
-**Script**: [../scripts/optimizers.py](../scripts/optimizers.py)  
+**Script**: [../../scripts/optimization_workflow/optimizers.py](../../scripts/optimization_workflow/optimizers.py)  
 **Library**: `openai` — `pip install openai`  
 **Provider**: OpenRouter (`https://openrouter.ai/api/v1`)  
 **API key**: set as environment variable `OPENROUTER_API_KEY`
@@ -173,7 +173,7 @@ next_params = optimizer.suggest()  # {"aspiration_volume": ...}
 
 **Usage**:
 ```python
-from scripts.optimizers import SOVH_LLM, OPENROUTER_MODELS
+from scripts.optimization_workflow.optimizers import SOVH_LLM, OPENROUTER_MODELS
 
 # Volume-only mode
 optimizer = SOVH_LLM(

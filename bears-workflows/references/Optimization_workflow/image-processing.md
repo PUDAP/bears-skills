@@ -5,7 +5,7 @@ description: Deterministic image processing pipeline using PIL perspective warp,
 
 # Image Processing
 
-**Script**: [../scripts/image_processing.py](../scripts/image_processing.py)  
+**Script**: [../../scripts/optimization_workflow/image_processing.py](../../scripts/optimization_workflow/image_processing.py)  
 **Dependencies**: `pip install numpy Pillow`
 
 ---
@@ -149,7 +149,7 @@ Uses **median** per channel to suppress outlier pixels (dust, reflections, bubbl
 ## Usage
 
 ```python
-from image_processing import run_pipeline, DEFAULT_CONFIG
+from scripts.optimization_workflow.image_processing import run_pipeline, DEFAULT_CONFIG
 
 rgb_values = run_pipeline(
     image_path="colour-RGB-blue_sample-1.jpg",

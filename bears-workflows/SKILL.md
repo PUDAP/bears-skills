@@ -34,19 +34,19 @@ Use this experiment when:
 - The task involves optimizing red, green, blue, and water volume ratios to minimize colour error
 - The user mentions colour mixing, Delta E 2000, BO, or LLM-guided liquid handling
 
-Runner script: [`scripts/run_colour_mixing.py`](scripts/run_colour_mixing.py)
-- End-to-end experiment runner; edit the config block at the top to change parameters
+Workflow helper scripts: [`scripts/optimization_workflow/`](scripts/optimization_workflow/)
+- Use the optimization, metric, image-processing, balance-processing, and thread helpers in this folder as needed
 - Set `ROBOT_IP` to the OT-2 IP address in `.env` for fully automated protocol execution via HTTP API
 - Set `OPENROUTER_API_KEY` environment variable before running
 - Outputs: generated protocols in `protocols/`, corrected images in `images/`, live report in `reports/report.md`
 
 Before running:
-- Refer to: [colour-mixing-opt](references/colour-mixing-opt.md)
-- See optimization details: [optimization.md](references/optimization.md)
-- See image processing details: [image-processing.md](references/image-processing.md)
-- Optimizer classes: [scripts/optimizers.py](scripts/optimizers.py)
-- Metrics utility: [scripts/metric.py](scripts/metric.py)
-- Image processing pipeline: [scripts/image_processing.py](scripts/image_processing.py)
+- Refer to: [colour-mixing-opt](references/Optimization_workflow/colour-mixing-opt.md)
+- See optimization details: [optimization.md](references/Optimization_workflow/optimization.md)
+- See image processing details: [image-processing.md](references/Optimization_workflow/image-processing.md)
+- Optimizer classes: [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
+- Metrics utility: [scripts/optimization_workflow/metric.py](scripts/optimization_workflow/metric.py)
+- Image processing pipeline: [scripts/optimization_workflow/image_processing.py](scripts/optimization_workflow/image_processing.py)
 
 ### Viscosity Optimization (`viscosity-optimization`)
 
@@ -55,7 +55,7 @@ Use for **iterative tuning of Opentrons OT-2 aspiration volume for viscous fluid
 Capabilities:
 - Automated protocol generation and execution on Opentrons OT-2
 - Concurrent gravimetric data collection from the PUDA balance machine (4 Hz) during each run
-- Balance readings converted to `mass_mg` and processed with `scripts/balance_data_process.py`
+- Balance readings converted to `mass_mg` and processed with `scripts/optimization_workflow/balance_data_process.py`
 - Automatic data processing: command merge, outlier removal, phase slicing, normalisation
 - Transfer error calculation (signed and absolute, in µL)
 - Bayesian Optimization (LCB or EO) or LLM-driven suggestion of next aspiration volume
@@ -71,11 +71,11 @@ Use this experiment when:
 - The user mentions BO, LCB, EO, or LLM-guided aspiration-volume optimization
 
 Before running:
-- Refer to: [viscosity-optimization](references/viscosity-optimization.md)
-- Optimizer classes: `SOVH_LCB`, `SOVH_EO`, and `SOVH_LLM` in [scripts/optimizers.py](scripts/optimizers.py)
+- Refer to: [viscosity-optimization](references/Optimization_workflow/viscosity-optimization.md)
+- Optimizer classes: `SOVH_LCB`, `SOVH_EO`, and `SOVH_LLM` in [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
 - Machine references: [opentrons-machine](../bears-machines/references/opentrons-machine.md), [balance-machine](../bears-machines/references/balance-machine.md)
-- Data processing script: [scripts/balance_data_process.py](scripts/balance_data_process.py)
-- Concurrent thread monitors: [scripts/thread.py](scripts/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
+- Data processing script: [scripts/optimization_workflow/balance_data_process.py](scripts/optimization_workflow/balance_data_process.py)
+- Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
 - Protocol output: generate OT-2 Python with `Protocol.to_python_code()` and save it under `reports/protocols/`
 
 ---
@@ -104,7 +104,7 @@ When answering experiment-selection questions:
 6. For viscosity optimization, Opentrons owns the run lifecycle: create a new `run_id`, send `play` once, and poll until terminal before downstream processing.
 7. **For viscosity optimization, before every `play`: confirm `get_mass()["fresh"] == True` and `age < 5 s`. If the balance is not streaming fresh readings, abort — do not send `play`.** Start the balance collection thread before `play`; stop and join the thread as soon as the run reaches a terminal state.
 8. If a run completed without balance data (e.g. Opentrons-only seed run), discard that run's result and re-run the protocol from the upload step, ensuring the balance hard gate passes and the collection thread is started before `play`.
-9. For viscosity optimization, use balance readings as `mass_mg`, process data with `scripts/balance_data_process.py`, and pick up tips sequentially from `A1`, `A2`, `A3`, `A4`, then row-major through the rack.
+9. For viscosity optimization, use balance readings as `mass_mg`, process data with `scripts/optimization_workflow/balance_data_process.py`, and pick up tips sequentially from `A1`, `A2`, `A3`, `A4`, then row-major through the rack.
 10. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 11. Opentrons protocols must always end with no tip attached to any pipette.
 12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.
