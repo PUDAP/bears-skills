@@ -1,9 +1,9 @@
 ---
-name: elephant-alignment
+name: yolo-alignment
 description: Align the Elephant Pro630 gripper over a target object using Logitech CAM2 YOLO detections and the two inner tape-edge lines on the gripper.
 ---
 
-# Elephant Alignment
+# YOLO Alignment
 
 Use this reference when the task is to align the Elephant Pro630 gripper before pickup. The alignment method uses the Logitech CAM2 side/front view. It does not use VLM for the alignment decision.
 
@@ -25,8 +25,8 @@ The gripper is aligned when `abs(offset_px) <= tolerance_px`.
 - Elephant driver: `elephant/driver/src/elephant_driver/elephant.py`
 - Driver exports: `elephant/driver/src/elephant_driver/__init__.py`
 - Driver README: `elephant/README.md`
-- Alignment helper script: `../../scripts/elephant/alignment.py`
-- Camera stream helper script: `../../scripts/elephant/camera_streams.py`
+- YOLO alignment helper script: `../../scripts/elephant/yolo_alignment.py`
+- Combined viewer module: `elephant_driver.combined_viewer`
 - Pickup workflow: `references/elephant/elephant-pickup-object.md`
 
 ## Required Hardware
@@ -44,7 +44,7 @@ The Elephant workspace must use the existing camera support from `elephant_drive
 
 - Pi camera capture uses `elephant_driver.camera.CameraConfig` and `capture_pi_image`.
 - CAM2 capture uses the CV livestream URL and `capture_snapshot` from `elephant_driver.cv`.
-- The local combined RAW + YOLO viewer is provided by `../../scripts/elephant/camera_streams.py`.
+- The local combined RAW + YOLO viewer is provided by the installed `elephant_driver.combined_viewer` module and is auto-started by `elephant/edge/main.py` when `ELEPHANT_START_COMBINED_VIEWER=true`.
 
 Important viewer endpoints:
 
@@ -63,7 +63,7 @@ CAM2 YOLO image:       http://127.0.0.1:5000/snapshot/cam2_yolo
 Start the viewer with:
 
 ```bash
-python bears-skills/bears-workflows/scripts/elephant/camera_streams.py --pi-ip 192.168.50.128 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
+python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
 ```
 
 ## Configuration Values
@@ -85,7 +85,7 @@ VERIFY_MM_PER_PIXEL = 0.35
 VERIFY_Y_SIGN = 1
 ```
 
-These defaults are also defined in `AlignmentConfig` in `../../scripts/elephant/alignment.py`.
+These defaults are also defined in `AlignmentConfig` in `../../scripts/elephant/yolo_alignment.py`.
 
 ## Alignment Workflow
 
@@ -107,7 +107,7 @@ These defaults are also defined in `AlignmentConfig` in `../../scripts/elephant/
 The reusable geometry function is:
 
 ```python
-from scripts.elephant.alignment import YoloCandidate, check_inner_tape_alignment
+from scripts.elephant.yolo_alignment import YoloCandidate, check_inner_tape_alignment
 
 check = check_inner_tape_alignment(
     candidates,

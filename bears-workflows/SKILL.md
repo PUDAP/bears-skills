@@ -78,7 +78,7 @@ Before running:
 - Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
 - Protocol output: generate OT-2 Python with `Protocol.to_python_code()` and save it under `reports/protocols/`
 
-### Elephant Alignment (`elephant-alignment`)
+### YOLO Alignment (`yolo-alignment`)
 
 Use for **aligning the Elephant Pro630 gripper over a detected target object before pickup** using Logitech CAM2 YOLO detections and the two inner tape-edge lines on the gripper.
 
@@ -95,9 +95,9 @@ Use this experiment when:
 - The task involves checking whether the target object is centered between gripper fingers
 
 Before running:
-- Refer to: [elephant-alignment](references/elephant/elephant-alignment.md)
-- Alignment helper script: [scripts/elephant/alignment.py](scripts/elephant/alignment.py)
-- Camera stream helper script: [scripts/elephant/camera_streams.py](scripts/elephant/camera_streams.py)
+- Refer to: [yolo-alignment](references/elephant/yolo-alignment.md)
+- YOLO alignment helper script: [scripts/elephant/yolo_alignment.py](scripts/elephant/yolo_alignment.py)
+- Combined viewer module: `python -m elephant_driver.combined_viewer`
 - Related pickup workflow: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
 
 ### Elephant Pickup Object (`elephant-pickup-object`)
@@ -120,8 +120,8 @@ Use this experiment when:
 Before running:
 - Refer to: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
 - Pickup helper script: [scripts/elephant/pickup_object.py](scripts/elephant/pickup_object.py)
-- Camera stream helper script: [scripts/elephant/camera_streams.py](scripts/elephant/camera_streams.py)
-- For pre-pick alignment details: [elephant-alignment](references/elephant/elephant-alignment.md)
+- Combined viewer module: `python -m elephant_driver.combined_viewer`
+- For pre-pick alignment details: [yolo-alignment](references/elephant/yolo-alignment.md)
 
 ---
 

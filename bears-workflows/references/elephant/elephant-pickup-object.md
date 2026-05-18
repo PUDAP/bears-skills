@@ -28,9 +28,9 @@ The pickup workflow repeatedly:
 - Driver exports: `elephant/driver/src/elephant_driver/__init__.py`
 - Driver README: `elephant/README.md`
 - Pickup helper script: `../../scripts/elephant/pickup_object.py`
-- Alignment helper script: `../../scripts/elephant/alignment.py`
-- Camera stream helper script: `../../scripts/elephant/camera_streams.py`
-- Alignment reference: `references/elephant/elephant-alignment.md`
+- YOLO alignment helper script: `../../scripts/elephant/yolo_alignment.py`
+- Combined viewer module: `elephant_driver.combined_viewer`
+- Alignment reference: `references/elephant/yolo-alignment.md`
 
 Workflow functions to implement or reuse:
 
@@ -63,7 +63,7 @@ If VLM is used, `OPENROUTER_API_KEY` must be configured locally. Never ask the u
 
 ## Camera Streams
 
-Use `../../scripts/elephant/camera_streams.py` to expose both cameras and their YOLO overlays. The helper intentionally uses the existing `elephant_driver` camera stack:
+Use the installed `elephant_driver.combined_viewer` module to expose both cameras and their YOLO overlays. The Elephant edge service starts it automatically when `ELEPHANT_START_COMBINED_VIEWER=true`. The module intentionally uses the existing `elephant_driver` camera stack:
 
 - Pi camera: `elephant_driver.camera.CameraConfig` and `capture_pi_image`
 - CAM2: `elephant_driver.cv.DEFAULT_STREAM_URL` and `capture_snapshot`
@@ -85,7 +85,7 @@ CAM2 YOLO image:       http://127.0.0.1:5000/snapshot/cam2_yolo
 Start the viewer with:
 
 ```bash
-python bears-skills/bears-workflows/scripts/elephant/camera_streams.py --pi-ip 192.168.50.128 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
+python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --workdir reports/elephant_camera --yolo-model-path elephant/yolov8n.pt
 ```
 
 ## Robot Constants
