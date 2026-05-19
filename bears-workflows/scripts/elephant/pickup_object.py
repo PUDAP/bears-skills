@@ -16,9 +16,11 @@ SCAN_POSITION = [-250.0, 280.0, 330.0, -179.730594, -0.396744, 110.994829]
 PLACE_POSITION = [-264.0, 175.0, 140.0, 179.99, 0.0, 113.0]
 
 DEFAULT_Z_TOUCH = 155.0
-MOVE_SPEED = 220
-PICK_SPEED = 180
-DESCEND_SPEED = 100
+ALIGNMENT_Z_OFFSET_MM = 15.0
+MAX_PICKUP_SPEED = 100
+MOVE_SPEED = MAX_PICKUP_SPEED
+PICK_SPEED = MAX_PICKUP_SPEED
+DESCEND_SPEED = MAX_PICKUP_SPEED
 LIFT_MM = 60.0
 GRIPPER_SETTLE_S = 1.2
 
@@ -54,6 +56,30 @@ def clamp_to_workspace(x: float, y: float) -> tuple[float, float]:
     )
 
 
+def clamp_pickup_speed(speed: int) -> int:
+    """Pickup workflows must never exceed MAX_PICKUP_SPEED."""
+    return min(int(speed), MAX_PICKUP_SPEED)
+
+
+def normalize_rotation_deg(angle: float) -> float:
+    """Map any equivalent angle into (-180, 180] degrees."""
+    normalized = float(angle) % 360.0
+    if normalized > 180.0:
+        normalized -= 360.0
+    return normalized
+
+
+def normalize_pose_rotations(coords: list[float]) -> list[float]:
+    """Return a copy with rx, ry, rz clamped to (-180, 180] degrees."""
+    if len(coords) < 6:
+        return coords
+    pose = list(coords)
+    pose[3] = normalize_rotation_deg(pose[3])
+    pose[4] = normalize_rotation_deg(pose[4])
+    pose[5] = normalize_rotation_deg(pose[5])
+    return pose
+
+
 def is_near_place_position(x: float, y: float) -> bool:
     dx = float(x) - PLACE_POSITION[0]
     dy = float(y) - PLACE_POSITION[1]
@@ -64,6 +90,45 @@ def get_stacked_place_position(place_count: int) -> list[float]:
     pose = PLACE_POSITION.copy()
     pose[0] = PLACE_POSITION[0] - (30.0 * int(place_count))
     return pose
+
+
+def alignment_height_z(z_touch: float) -> float:
+    """CAM2 alignment height: final pick Z plus the standard offset."""
+    return float(z_touch) + ALIGNMENT_Z_OFFSET_MM
+
+
+def validate_pickup_commands_before_close(
+    commands: list[dict[str, Any]],
+    *,
+    z_touch: float,
+    z_tol_mm: float = 2.0,
+) -> tuple[bool, str]:
+    """Check that protocol JSON reaches alignment height before close_gripper.
+
+    This validates motion order only. CAM2 YOLO alignment confirmation is still
+    required separately before descending to z_touch (see elephant-pickup-object.md).
+    """
+    align_z = alignment_height_z(z_touch)
+    seen_align_height = False
+    for step in commands:
+        name = step.get("name")
+        if name == "move":
+            coords = (step.get("params") or {}).get("coords") or []
+            if len(coords) >= 3 and abs(float(coords[2]) - align_z) <= z_tol_mm:
+                seen_align_height = True
+        if name == "close_gripper":
+            if not seen_align_height:
+                step_no = step.get("step_number", "?")
+                return (
+                    False,
+                    f"Step {step_no}: close_gripper before alignment-height move "
+                    f"(Z={align_z:.1f} mm = z_touch {z_touch} + {ALIGNMENT_Z_OFFSET_MM}).",
+                )
+            return (
+                True,
+                "Alignment-height move precedes close_gripper (still require CAM2 confirmation).",
+            )
+    return True, "No close_gripper in command list."
 
 
 def safe_open_gripper(arm: Elephant, *, settle_s: float = GRIPPER_SETTLE_S) -> None:
@@ -123,8 +188,11 @@ def move_pose(
         coords = arm.get_coords()
         if coords and len(coords) >= 6:
             safe_pose = pose._replace(rx=coords[3], ry=coords[4], rz=coords[5])
+    else:
+        normalized = normalize_pose_rotations(safe_pose.as_list())
+        safe_pose = Pose6D.from_any(normalized)
 
-    arm.move(safe_pose, speed=speed)
+    arm.move(safe_pose, speed=clamp_pickup_speed(speed))
     if not wait:
         time.sleep(0.35)
         return True
@@ -185,15 +253,18 @@ def pick_after_alignment(
     pick_y: float,
     z_touch: float = DEFAULT_Z_TOUCH,
     place_count: int = 0,
+    alignment_confirmed: bool = False,
 ) -> dict[str, Any]:
-    """Execute the motion sequence after visual alignment is confirmed.
+    """Execute the pickup sequence only after CAM2 alignment is confirmed."""
+    if not alignment_confirmed:
+        raise RuntimeError(
+            "CAM2 alignment must be confirmed before descending to z_touch "
+            "or closing the gripper."
+        )
 
-    This function assumes the caller has already moved to alignment height and
-    confirmed CAM2 gripper alignment.
-    """
     refined = arm.get_coords()
     if not refined or len(refined) < 6:
-        refined = [pick_x, pick_y, z_touch + 15.0, -179.99, 0.0, 111.0]
+        refined = [pick_x, pick_y, alignment_height_z(z_touch), -179.99, 0.0, 111.0]
 
     pick_pose = Pose6D.from_any([refined[0], refined[1], z_touch, refined[3], refined[4], refined[5]])
     move_pose(arm, pick_pose, DESCEND_SPEED, timeout_s=120.0)
@@ -243,4 +314,3 @@ def pick_after_alignment(
         "pick_xy": (pick_x, pick_y),
         "place_pose": place_target.as_list(),
     }
-

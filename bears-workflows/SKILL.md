@@ -106,12 +106,8 @@ Before running:
 Use for **detecting, aligning, picking, lifting, and placing objects with the Elephant Pro630** using Pi camera YOLO/VLM target selection and CAM2 gripper alignment.
 
 Capabilities:
-- Starts or uses Pi camera and CAM2 camera streams for the Elephant workspace
-- Captures Pi camera top-view images for YOLO/VLM detection
-- Converts target pixel centers to robot XY using the documented Elephant affine calibration
-- Uses CAM2 alignment before final descent
-- Controls the Elephant electric gripper through `elephant_driver.Elephant`
-- Places picked objects at a configured place pose with stacked X offsets
+- Pi camera YOLO/VLM detect → robot XY; CAM2 align at `z_touch + 15 mm` before pick
+- Pick, lift, place via `elephant_driver.Elephant`
 
 Use this experiment when:
 - The user wants the Elephant arm to pick up a described object
@@ -119,11 +115,8 @@ Use this experiment when:
 - The task mentions `elephant_driver` or the Elephant Pro630 pick workflow
 
 Before running:
-- Refer to: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
-- Pickup helper script: [scripts/elephant/pickup_object.py](scripts/elephant/pickup_object.py)
-- Combined viewer module: `python -m elephant_driver.combined_viewer`
-- Pi-hosted stream routes are `/pi` and `/snapshot/pi`; local viewer routes are `/pi_camera` and `/snapshot/pi_camera`
-- For pre-pick alignment details: [yolo-alignment](references/elephant/yolo-alignment.md)
+- [elephant-pickup-object](references/elephant/elephant-pickup-object.md), [yolo-alignment](references/elephant/yolo-alignment.md)
+- [scripts/elephant/pickup_object.py](scripts/elephant/pickup_object.py)
 
 ---
 
@@ -156,3 +149,4 @@ When answering experiment-selection questions:
 11. Opentrons protocols must always end with no tip attached to any pipette.
 12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.
 13. **Ask user if unsure — do not assume**.
+14. **Elephant pickup:** CAM2 align at `z_touch + 15 mm` before `z_touch` or `close_gripper`; `move` speed ≤ 100; rotations in [-180, 180]. See [elephant-pickup-object](references/elephant/elephant-pickup-object.md).

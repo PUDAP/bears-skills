@@ -97,6 +97,47 @@ Start the viewer with:
 python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --start-pi-stream --pi-stream-port 5000 --workdir reports/elephant_camera --cam2-stream-url rtsp://100.125.227.14:8554/livestream --yolo-model-path elephant/yolov8n.pt
 ```
 
+## Motion Limits (Mandatory)
+
+These limits apply to **every** Elephant pickup workflow: Python scripts, PUDA protocol JSON, and ad-hoc `move` commands.
+
+| Limit | Rule |
+|---|---|
+| Speed | `speed` on every `move` step must be **≤ 100**. Use `100` for scan, approach, descend, lift, place, and recovery. Never use `180`, `220`, or other higher values in pickup flows. |
+| Rotation | Each pose rotation component (`rx`, `ry`, `rz`) must stay within **-180° to 180°** (inclusive). Normalize equivalent angles (for example `359.9` → `-0.1`) before generating or running a protocol. |
+
+Before creating or running a pickup protocol, validate **every** `move` command:
+
+1. `params.speed <= 100`
+2. `params.coords[3]`, `[4]`, and `[5]` are each in `[-180, 180]`
+
+Reusable helpers in `../../scripts/elephant/pickup_object.py`:
+
+```python
+from scripts.elephant.pickup_object import (
+    MAX_PICKUP_SPEED,
+    clamp_pickup_speed,
+    normalize_rotation_deg,
+    normalize_pose_rotations,
+)
+
+speed = clamp_pickup_speed(220)  # -> 100
+coords = normalize_pose_rotations([-331.06, 296.51, 330.0, 179.99, 0.001, 111.0])
+```
+
+Example protocol `move` step (correct):
+
+```json
+{
+  "name": "move",
+  "machine_id": "elephant",
+  "params": {
+    "coords": [-331.06, 296.51, 330.0, 179.99, 0.001, 111.0],
+    "speed": 100
+  }
+}
+```
+
 ## Robot Constants
 
 Use these calibrated defaults unless the workspace has been recalibrated:
@@ -109,8 +150,9 @@ SCAN_POSITION = [-250, 280.0, 330, -179.730594, -0.396744, 110.994829]
 PLACE_POSITION = [-264.0, 175.0, 140.0, 179.99, 0.0, 113.0]
 
 DEFAULT_Z_TOUCH = 155.0
-MOVE_SPEED = 220
-PICK_SPEED = 180
+MAX_PICKUP_SPEED = 100
+MOVE_SPEED = 100
+PICK_SPEED = 100
 DESCEND_SPEED = 100
 LIFT_MM = 60.0
 
@@ -196,9 +238,9 @@ For each target object:
 4. Clamp `(pick_x, pick_y)` to workspace bounds.
 5. Move above the target at scan Z.
 6. Descend to `z_touch + 15 mm` for CAM2 alignment.
-7. Run `perform_manual_alignment_flow(arm, object_name)`.
+7. Run `perform_manual_alignment_flow(arm, object_name)` and require positive CAM2 alignment confirmation.
 8. If alignment is confirmed, read the current refined XY from `arm.get_coords()`.
-9. Descend to `z_touch` while keeping the refined XY.
+9. Only after confirmed CAM2 alignment, descend to `z_touch` while keeping the refined XY.
 10. Close the electric gripper and wait for settle.
 11. Lift straight up to scan Z.
 12. Return to scan position.
@@ -218,8 +260,21 @@ result = pick_after_alignment(
     pick_y=pick_y,
     z_touch=z_touch,
     place_count=pick_count,
+    alignment_confirmed=True,
 )
 ```
+
+`pick_after_alignment(...)` raises an error unless `alignment_confirmed=True`. Do not catch or bypass that error in pickup flows.
+
+## PUDA JSON Sequencing
+
+PUDA JSON has no built-in interactive CAM2 confirmation command. For pickup work, do not generate or run a single JSON protocol that moves from scan height directly to `z_touch` and `close_gripper`.
+
+Use this split sequence instead:
+
+1. Detection/approach protocol: move above the target, then descend only to `z_touch + 15 mm`.
+2. Run CAM2 YOLO alignment and human confirmation.
+3. Only after alignment is confirmed, run the post-alignment pickup/place protocol that descends to `z_touch` and closes the gripper.
 
 ## Placement
 
@@ -239,9 +294,11 @@ Do not pick objects detected near the place position. Treat them as already plac
 
 ## Safety Rules
 
+- Enforce the [Motion Limits](#motion-limits-mandatory) on every pickup script and protocol before execution.
 - Always move to scan Z before large XY moves.
 - Always initialize and open the gripper before starting the pick loop.
 - Never descend to `z_touch` until CAM2 alignment is confirmed.
+- Never close the gripper for pickup unless CAM2 alignment has been confirmed in the current pick attempt.
 - Keep small alignment moves in Y only unless recalibrating the camera/robot mapping.
 - Preserve current rotation during local moves unless intentionally commanding a known pose.
 - Always close the gripper before lifting.
