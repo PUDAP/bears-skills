@@ -12,6 +12,7 @@ Use this reference when the task is to run or adapt a VLM-only Elephant pick-and
 - Do not copy API keys into workflow helpers or docs. Require `OPENROUTER_API_KEY` in the local environment.
 - Confirm the active Elephant robot IP and Pi camera IP before running.
 - Prefer the driver public methods where possible, but keep a reconnect wrapper available because the robot socket can drop during motion polling.
+- Retain both calibration forms: the affine pixel-to-robot constants used for VLM coordinate conversion and the `CameraCalibration` object used by Elephant driver construction. Do not remove either calibration block unless the workspace has been deliberately recalibrated and the replacement values are recorded.
 - VLM output is untrusted. Accept only strict JSON and validate bounding boxes and grid squares before using them for motion.
 - The placement grid is generated over `detection_debug.jpg`, so the grid image includes object bounding boxes. For cleaner placement reasoning, use a fresh raw workspace image if placement suggestions become biased by debug overlays.
 
@@ -80,8 +81,22 @@ GRIPPER_SETTLE_S = 2.0
 ROBOT_X_MIN, ROBOT_X_MAX = -500.0, -100.0
 ROBOT_Y_MIN, ROBOT_Y_MAX = -250.0, 400.0
 
+# Retained affine calibration: derived from 9 measured correspondences at
+# z_touch=155 mm in a 640x480 top-view image. Do not replace this with generic
+# mm-per-pixel scaling unless the workspace is recalibrated.
 AFFINE_X = [-0.00055275, 0.55156563, -465.44779855]
 AFFINE_Y = [0.53339222, 0.02927655, 101.07712885]
+
+# Retained driver calibration: keep this for Elephant driver construction even
+# when the VLM move coordinate math uses the affine transform above.
+CALIBRATION = CameraCalibration(
+    cal_z=142,
+    table_z=155.0,
+    mm_per_pixel_at_cal_z=0.534,
+    camera_to_tcp_x=0.0,
+    camera_to_tcp_y=2.0,
+    rotate_image_180=True,
+)
 ```
 
 Pixel-to-robot conversion:
@@ -158,6 +173,7 @@ Use this safe staged motion pattern:
 
 - Confirm the active robot IP and Pi IP before running.
 - Confirm `OPENROUTER_API_KEY` is configured locally; do not store it in source.
+- Do not remove `AFFINE_X`, `AFFINE_Y`, or `CALIBRATION`; update them only as part of an explicit recalibration.
 - Stop if the robot coordinates cannot be read.
 - Stop if VLM detection returns no valid bounding boxes.
 - Warn if `z_touch` differs from `155.0 mm` by more than `20 mm`, because the affine calibration was measured at that surface height.

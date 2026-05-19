@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import cv2
 from openai import OpenAI
 
-from elephant_driver import CameraConfig, ViewerConfig
+from elephant_driver import CameraCalibration, CameraConfig, ViewerConfig
 from elephant_driver.elephant import (
     DEFAULT_GRIPPER_SETTLE_S,
     DEFAULT_SCAN_COORDS,
@@ -47,8 +47,23 @@ XY_REACH_TIMEOUT_S = 15.0
 ROBOT_X_MIN, ROBOT_X_MAX = -500.0, -100.0
 ROBOT_Y_MIN, ROBOT_Y_MAX = -250.0, 400.0
 
+# Affine calibration derived from 9 measured correspondences at z_touch=155 mm
+# in a 640x480 top-view image. Do not remove or replace this with generic
+# mm-per-pixel scaling unless the workspace is recalibrated.
 AFFINE_X = [-0.00055275, 0.55156563, -465.44779855]
 AFFINE_Y = [0.53339222, 0.02927655, 101.07712885]
+
+# Retain the driver calibration object as well as the affine calibration. Some
+# Elephant driver paths expect a CameraCalibration instance even though VLM move
+# coordinate conversion uses pixel_to_robot_coords() below.
+CALIBRATION = CameraCalibration(
+    cal_z=142,
+    table_z=DEFAULT_Z_TOUCH,
+    mm_per_pixel_at_cal_z=0.534,
+    camera_to_tcp_x=0.0,
+    camera_to_tcp_y=2.0,
+    rotate_image_180=True,
+)
 
 
 def make_camera_config(
@@ -219,6 +234,7 @@ def draw_detection(detection: Detection, save_path: str | os.PathLike[str]) -> s
 
 
 def pixel_to_robot_coords(px: int, py: int) -> tuple[float, float]:
+    """Convert image pixels to robot XY using the retained affine calibration."""
     robot_x = AFFINE_X[0] * px + AFFINE_X[1] * py + AFFINE_X[2]
     robot_y = AFFINE_Y[0] * px + AFFINE_Y[1] * py + AFFINE_Y[2]
     return robot_x, robot_y
