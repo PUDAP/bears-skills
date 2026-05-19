@@ -25,7 +25,7 @@ from elephant_driver.elephant import (
 ROBOT_IP = "192.168.50.129"
 PI_IP = "192.168.50.129"
 
-VLM_MODEL = "anthropic/claude-sonnet-4.6"
+VLM_MODEL = "openai/gpt-5.5"
 VLM_TIMEOUT_S = 60
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
