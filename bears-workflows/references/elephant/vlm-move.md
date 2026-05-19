@@ -13,6 +13,8 @@ Use this reference when the task is to run or adapt a VLM-only Elephant pick-and
 - Confirm the active Elephant robot IP and Pi camera IP before running.
 - Prefer the driver public methods where possible, but keep a reconnect wrapper available because the robot socket can drop during motion polling.
 - Retain both calibration forms: the affine pixel-to-robot constants used for VLM coordinate conversion and the `CameraCalibration` object used by Elephant driver construction. Do not remove either calibration block unless the workspace has been deliberately recalibrated and the replacement values are recorded.
+- If detection is correct but pickup misses consistently, tune the retained `PICK_OFFSET_X_MM` and `PICK_OFFSET_Y_MM` values rather than changing calibration constants.
+- Before descending from hover, capture a CAM2 verification image and require operator confirmation that the gripper is aligned over the object.
 - VLM output is untrusted. Accept only strict JSON and validate bounding boxes and grid squares before using them for motion.
 - The placement grid is generated over `detection_debug.jpg`, so the grid image includes object bounding boxes. For cleaner placement reasoning, use a fresh raw workspace image if placement suggestions become biased by debug overlays.
 
@@ -29,14 +31,17 @@ The VLM move workflow:
 7. Chooses the detected object closest to image center.
 8. Draws detection debug boxes.
 9. Converts object pixel center to robot XY with the affine calibration.
-10. Moves to high hover above the target.
-11. Descends in two stages to pick Z.
-12. Closes the gripper and lifts in two stages.
-13. Creates a 26 by 26 placement grid overlay.
-14. Calls the VLM for an empty placement square recommendation.
-15. Lets the user accept or override the square.
-16. Converts the square center to robot XY.
-17. Moves, descends, opens the gripper, and returns home.
+10. Applies the retained pickup XY offset correction.
+11. Moves to high hover above the target.
+12. Captures a CAM2 hover verification image.
+13. Requires operator confirmation before descending.
+14. Descends in two stages to pick Z.
+15. Closes the gripper and lifts in two stages.
+16. Creates a 26 by 26 placement grid overlay.
+17. Calls the VLM for an empty placement square recommendation.
+18. Lets the user accept or override the square.
+19. Converts the square center to robot XY.
+20. Moves, descends, opens the gripper, and returns home.
 
 ## Related Files
 
@@ -71,6 +76,13 @@ ROBOT_PORT = 5001
 RUN_POSE = [-250.0, 280.0, 330.0, -179.99, 0.0, 111.0]
 DEFAULT_Z_TOUCH = 155.0
 CLEARANCE_Z = 330.0
+
+CAM2_HOVER_VERIFY_PATH = "cam2_hover_verify.jpg"
+
+# Retained pickup correction. Tune this only when VLM detection is visually
+# correct but the gripper has a repeatable XY landing bias.
+PICK_OFFSET_X_MM = 0.0
+PICK_OFFSET_Y_MM = 0.0
 
 RUN_POSE_SPEED = 500
 MOVE_SPEED = 500
@@ -107,6 +119,15 @@ robot_y = AFFINE_Y[0] * px + AFFINE_Y[1] * py + AFFINE_Y[2]
 ```
 
 Clamp the converted coordinates to the workspace before moving.
+
+Pickup offset correction:
+
+```python
+pick_x, pick_y = pixel_to_robot_coords(detection.cx, detection.cy)
+pick_x += PICK_OFFSET_X_MM
+pick_y += PICK_OFFSET_Y_MM
+pick_x, pick_y = clamp_to_workspace(pick_x, pick_y)
+```
 
 ## VLM Detection Contract
 
@@ -159,21 +180,25 @@ Use this safe staged motion pattern:
 2. Move to `RUN_POSE` at clearance.
 3. Initialize and open the gripper.
 4. Move to target XY at clearance.
-5. Descend to `z_touch + 30 mm`.
-6. Descend to `z_touch`.
-7. Close the gripper.
-8. Lift to `z_touch + 50 mm`.
-9. Lift to `CLEARANCE_Z`.
-10. Move to placement XY at clearance.
-11. Descend to `z_touch`.
-12. Open the gripper.
-13. Return to `RUN_POSE`.
+5. Capture CAM2 at hover with `capture_stream_image(output_path=CAM2_HOVER_VERIFY_PATH)`.
+6. Require operator confirmation that the object is aligned under/between the gripper before descending.
+7. Descend to `z_touch + 30 mm`.
+8. Descend to `z_touch`.
+9. Close the gripper.
+10. Lift to `z_touch + 50 mm`.
+11. Lift to `CLEARANCE_Z`.
+12. Move to placement XY at clearance.
+13. Descend to `z_touch`.
+14. Open the gripper.
+15. Return to `RUN_POSE`.
 
 ## Safety Rules
 
 - Confirm the active robot IP and Pi IP before running.
 - Confirm `OPENROUTER_API_KEY` is configured locally; do not store it in source.
 - Do not remove `AFFINE_X`, `AFFINE_Y`, or `CALIBRATION`; update them only as part of an explicit recalibration.
+- Do not descend from hover until the CAM2 verification image has been inspected and accepted by the operator.
+- If CAM2 verification shows the gripper is offset, stop and tune `PICK_OFFSET_X_MM` / `PICK_OFFSET_Y_MM`; do not continue to final descent.
 - Stop if the robot coordinates cannot be read.
 - Stop if VLM detection returns no valid bounding boxes.
 - Warn if `z_touch` differs from `155.0 mm` by more than `20 mm`, because the affine calibration was measured at that surface height.
@@ -190,6 +215,7 @@ frame.jpg
 optimized.jpg
 detection_debug.jpg
 grid_overlay.jpg
+cam2_hover_verify.jpg
 ```
 
 Inspect these outputs before changing prompts, calibration values, or motion constants.

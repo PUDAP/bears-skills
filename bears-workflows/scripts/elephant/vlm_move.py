@@ -28,6 +28,7 @@ PI_IP = "192.168.50.129"
 VLM_MODEL = "openai/gpt-5.5"
 VLM_TIMEOUT_S = 60
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+CAM2_HOVER_VERIFY_PATH = "cam2_hover_verify.jpg"
 
 RUN_POSE = list(DEFAULT_SCAN_COORDS)
 DEFAULT_Z_TOUCH = 155.0
@@ -38,6 +39,11 @@ MOVE_SPEED = DEFAULT_SPEED
 PICK_SPEED = 400
 DESCEND_SPEED = 300
 GRIPPER_SETTLE_S = DEFAULT_GRIPPER_SETTLE_S
+
+# Apply this after affine pixel-to-robot conversion when the object is detected
+# correctly but the gripper lands with a consistent XY bias.
+PICK_OFFSET_X_MM = 0.0
+PICK_OFFSET_Y_MM = 0.0
 
 Z_REACH_TOL_MM = 5.0
 Z_REACH_TIMEOUT_S = 60.0
@@ -247,8 +253,36 @@ def clamp_to_workspace(x: float, y: float) -> tuple[float, float]:
     )
 
 
+def apply_pick_offset(x: float, y: float) -> tuple[float, float]:
+    """Apply the retained gripper pickup correction and clamp to workspace."""
+    corrected_x = x + PICK_OFFSET_X_MM
+    corrected_y = y + PICK_OFFSET_Y_MM
+    return clamp_to_workspace(corrected_x, corrected_y)
+
+
+def capture_cam2_hover_verification(
+    arm,
+    *,
+    save_path: str | os.PathLike[str] = CAM2_HOVER_VERIFY_PATH,
+) -> str:
+    """Capture CAM2 at hover so the operator can verify gripper alignment."""
+    try:
+        return arm.capture_stream_image(output_path=str(save_path))
+    except TypeError:
+        return arm.capture_stream_image(str(save_path))
+
+
+def confirm_hover_alignment(image_path: str) -> None:
+    """Require operator confirmation before descending from hover."""
+    print("\nCAM2 hover alignment verification")
+    print(f"Inspect CAM2 image: {image_path}")
+    answer = input("Continue to descend and pick? Type YES to continue: ").strip()
+    if answer != "YES":
+        raise RuntimeError("Pickup aborted by operator after CAM2 hover verification.")
+
+
 def target_from_detection(detection: Detection) -> tuple[float, float]:
-    return clamp_to_workspace(*pixel_to_robot_coords(detection.cx, detection.cy))
+    return apply_pick_offset(*pixel_to_robot_coords(detection.cx, detection.cy))
 
 
 def validate_grid_square(square: str) -> str:
