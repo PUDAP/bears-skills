@@ -101,6 +101,32 @@ Before running:
 - Pi-hosted stream routes are `/pi` and `/snapshot/pi`; local viewer routes are `/pi_camera` and `/snapshot/pi_camera`
 - Related pickup workflow: [elephant-pickup-object](references/elephant/elephant-pickup-object.md)
 
+### VLM Move (`vlm_move`)
+
+Use for **VLM-only Elephant Pro630 pick-and-place without YOLO**, using a Pi top-view image, strict JSON VLM bounding boxes, affine pixel-to-robot calibration, and a VLM-recommended grid placement square.
+
+Capabilities:
+- Captures a Pi camera image through the Elephant driver camera configuration
+- Uses a vision-language model to detect all visible instances of a natural-language target object
+- Selects the detected instance closest to the image center
+- Converts the selected pixel center to Elephant robot XY using the calibrated affine mapping
+- Moves through safe high-Z, mid-Z, pick-Z, lift, and placement poses
+- Creates a 26 by 26 grid overlay for placement selection
+- Uses the VLM to recommend an empty placement square, then asks for human confirmation
+- Saves `detection_debug.jpg` and `grid_overlay.jpg` for inspection
+
+Use this experiment when:
+- The user wants the Elephant arm to pick and place a described object without YOLO
+- The task mentions `vlm no yolo.py`, VLM-only detection, grid placement, or no-YOLO movement
+- The workflow should use OpenRouter/OpenAI-compatible VLM calls rather than a local YOLO model
+
+Before running:
+- Refer to: [vlm-move](references/elephant/vlm-move.md)
+- VLM move helper script: [scripts/elephant/vlm_move.py](scripts/elephant/vlm_move.py)
+- Elephant driver module: `elephant_driver`
+- Configure `OPENROUTER_API_KEY` locally; never paste API keys into chat or source files
+- Confirm robot IP, Pi IP, pick Z height, and that the Pi camera image is fresh
+
 ### Elephant Pickup Object (`elephant-pickup-object`)
 
 Use for **detecting, aligning, picking, lifting, and placing objects with the Elephant Pro630** using Pi camera YOLO/VLM target selection and CAM2 gripper alignment.
