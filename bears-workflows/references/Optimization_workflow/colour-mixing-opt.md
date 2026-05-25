@@ -229,7 +229,7 @@ For the 3 initial mixes this produces `DeltaE_1`, `DeltaE_2`, `DeltaE_3`.
 **Step 8 — Optimizer feedback**
 Pass all `(volume_ratios, Delta E 2000)` pairs (one per active well) to the chosen optimizer:
 - **BO**: seed the surrogate model with all 3 initial `(ratio, Delta E 2000)` observations
-- **LLM**: provide the full list of `(ratios, RGB, Delta E 2000)` for all 3 initial mixes and request the next suggestion
+- **LLM**: provide the full list of `(ratios, RGB, Delta E 2000)` for all 3 initial mixes and request the next suggestion. Capture the model's reasoning separately from the strict numeric suggestion so it can be recorded in the report.
 
 **Step 9 — New volume ratio suggestion**
 The optimizer returns the next `(R_vol, G_vol, B_vol, water_vol)` to try.
@@ -291,6 +291,7 @@ Example `x_init` log block:
 | Image saved | colour-RGB-<Sample name that user input>-<N>.jpg |
 | Target colour RGB | (<R_target>, <G_target>, <B_target>) |
 | Next suggested ratio (R, G, B, water) | (<R_next> µL, <G_next> µL, <B_next> µL, <water_next> µL) |
+| LLM reasoning | <include only when LLM optimizer was used: concise reasoning behind the suggested ratio> |
 | Stop condition reached | Yes / No |
 
 ### Wells processed this iteration
@@ -301,6 +302,8 @@ Example `x_init` log block:
 ```
 
 The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first BO/LLM-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
+
+When the LLM optimizer is used, every optimization iteration block must include the `LLM reasoning` row explaining why the suggested `(R, G, B, water)` ratio was chosen. When BO is used, omit the `LLM reasoning` row from the iteration block. Keep LLM reasoning as a concise report note, and keep the validated numeric JSON suggestion separate from that reasoning before protocol generation.
 
 **Step 11 — Generate and execute protocol**
 Use **puda-protocol** to generate a new protocol with the suggested volumes and execute it on the Opentrons.
@@ -331,6 +334,7 @@ On stop: generate a final summary report using the markdown structure defined in
 - If `LLM` optimization requires credentials such as `OPENROUTER_API_KEY`, require them to be pre-configured in the local environment outside the chat before running.
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
 - `OPENROUTER_BASE_URL` must also be set in the local `.env` file before running any LLM optimizer. If it is not found, stop and instruct the user to add it and do not proceed until the variable is confirmed set.
+- When using the LLM optimizer, record the LLM reasoning for each suggested `(R, G, B, water)` ratio inside that iteration's report block, while still accepting only the validated numeric suggestion for protocol generation. When using BO, omit the `LLM reasoning` row.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
 - Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`

@@ -481,6 +481,7 @@ class SOCM_LLM:
 
         # Each entry: {"iteration": int, "volumes": [R,G,B,water], "rgb": (R,G,B), "delta_e_2000": float}
         self._history: list[dict] = []
+        self.last_reasoning: str | None = None
 
     def observe(
         self,
@@ -506,6 +507,16 @@ class SOCM_LLM:
         Ask the LLM for the next ``(R_vol, G_vol, B_vol, water_vol)`` in µL
         (sum = ``total_volume``).
         """
+        volumes, _reasoning = self.suggest_with_reasoning()
+        return volumes
+
+    def suggest_with_reasoning(self) -> tuple[list[float], str]:
+        """
+        Ask for strict numeric JSON first, then capture concise reasoning.
+
+        Reasoning is requested only after the numeric suggestion validates, so
+        protocol generation still uses validated numbers only.
+        """
         if not self._history:
             raise RuntimeError("No observations recorded. Call observe() first.")
 
@@ -514,7 +525,10 @@ class SOCM_LLM:
             prompt = self._build_prompt(validation_error=validation_error)
             try:
                 raw = self._call_model(prompt)
-                return self._parse_and_validate(raw)
+                volumes = self._parse_and_validate(raw)
+                reasoning = self.explain_suggestion(volumes)
+                self.last_reasoning = reasoning
+                return volumes, reasoning
             except (json.JSONDecodeError, KeyError, ValueError) as exc:
                 if attempt == self.max_retries:
                     raise ValueError(
@@ -566,6 +580,39 @@ class SOCM_LLM:
                 f"{self.total_volume} µL (±1 µL).",
             ]
         return "\n".join(lines)
+
+    def _build_reasoning_prompt(self, volumes: list[float]) -> str:
+        if len(volumes) == 3:
+            volumes = [*volumes, self.total_volume - sum(float(v) for v in volumes)]
+        r, g, b, w = volumes
+        lines = [
+            "# RGB colour mixing optimization reasoning",
+            "",
+            "Explain concisely why this validated next mix was suggested.",
+            f"- Target colour (R, G, B): {self.target_colour}",
+            f"- Suggested volumes (R, G, B, water uL): ({r:.4g}, {g:.4g}, {b:.4g}, {w:.4g})",
+            "",
+            "Use the experiment history below. Mention the colour-direction logic and Delta E 2000 trend.",
+            "Keep the answer to 1-3 concise sentences for a markdown report.",
+            "",
+            "## History",
+        ]
+        for e in self._history:
+            history_volumes = tuple(round(float(v), 4) for v in e["volumes"])
+            lines.append(
+                f"- Iteration {e['iteration']}: volumes={history_volumes}, "
+                f"mixed_rgb={e['rgb']}, delta_e_2000={float(e['delta_e_2000']):.4f}"
+            )
+        return "\n".join(lines)
+
+    def explain_suggestion(self, volumes: list[float]) -> str:
+        """Return concise LLM reasoning for a validated numeric suggestion."""
+        try:
+            reasoning = self._call_model(self._build_reasoning_prompt(volumes)).strip()
+        except Exception as exc:
+            reasoning = f"Reasoning unavailable: {exc}"
+        self.last_reasoning = reasoning
+        return reasoning
 
     def _call_model(self, prompt: str) -> str:
         """
