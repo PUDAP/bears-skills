@@ -640,7 +640,7 @@ class SOCM_LLM:
             )
         return "\n".join(lines)
 
-    '''def explain_suggestion(self, volumes: list[float]) -> str:
+    def explain_suggestion(self, volumes: list[float]) -> str:
         """Return concise LLM reasoning for a validated numeric suggestion."""
         try:
             reasoning = self._call_model(self._build_reasoning_prompt(volumes)).strip()
@@ -648,7 +648,7 @@ class SOCM_LLM:
             reasoning = f"Reasoning unavailable: {exc}"
         self.last_reasoning = reasoning
         return reasoning
-'''
+
     def _call_model(self, prompt: str) -> str:
         """
         Send a prompt to the OpenRouter model and return the raw response text.
