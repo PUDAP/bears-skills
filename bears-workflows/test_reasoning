@@ -496,6 +496,7 @@ class SOCM_LLM:
         self._client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
+            timeout=120.0,
         )
 
         # Each entry: {"iteration": int, "volumes": [R,G,B,water], "rgb": (R,G,B), "delta_e_2000": float}
@@ -620,7 +621,7 @@ class SOCM_LLM:
         if len(volumes) == 3:
             volumes = [*volumes, self.total_volume - sum(float(v) for v in volumes)]
         r, g, b, w = volumes
-        lines = [
+        lines = [   
             "# RGB colour mixing optimization reasoning",
             "",
             "Explain concisely why this validated next mix was suggested.",
@@ -1059,6 +1060,7 @@ class SOVH_LLM:
         self._client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
+            timeout=120.0,
         )
 
         self._history: list[dict[str, Any]] = []
