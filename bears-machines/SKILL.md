@@ -11,7 +11,7 @@ Provide machine-selection and capability guidance for PUDA workflows, then load 
 
 ## Critical Rule
 
-If you are unsure which machine should be used for a command, **ask the user** before proceeding.  
+If you are unsure which machine should be used for a command, **ask the user** before proceeding.
 Do **not** assume.
 
 ## Machine Capabilities and When to Use
@@ -73,7 +73,7 @@ Use this machine when:
 
 Before use:
 - Refer to: [balance-machine](references/balance-machine.md)
-- Ask the user for the **Linux serial port** (`/dev/ttyUSB1`, etc.) — do not assume
+- Ask the user for the **Linux serial port** (`/dev/ttyUSB1`, etc.) - do not assume
 - Ensure the edge service is running (`uv run --package balance-edge python edge/balance.py`)
 
 ### Opentrons Machine (`machine_id: "opentrons"`)
@@ -81,7 +81,7 @@ Before use:
 Use for **automated liquid handling and full protocol generation on the Opentrons OT-2 robot**.
 
 Capabilities:
-- Full protocol code generation via `Protocol.to_python_code()` — produces valid runnable OT-2 Python
+- Full protocol code generation via `Protocol.to_python_code()` - produces valid runnable OT-2 Python
 - Pipetting workflows: `aspirate`, `dispense`, `transfer` (with auto-chunking for large volumes)
 - Tip management: `pick_up_tip`, `drop_tip`
 - Deck and labware setup: `load_labware`, `load_instrument`
@@ -90,7 +90,7 @@ Capabilities:
 - CSV-driven loops: `read_csv_file` + `loop` for data-driven protocols
 - Custom labware support: AMDM mass balance vials (30 mL, 50 mL) loaded inline
 - All gen2 pipette types: p10, p20, p300, p1000 (single and multi-channel)
-- **External camera image capture**: `camera_capture` — triggers the external camera mounted above the deck to capture and save a still image of the wellplate
+- **External camera image capture**: `camera_capture` - triggers the external camera mounted above the deck to capture and save a still image of the wellplate
 
 Use this machine when:
 - The user references an Opentrons OT-2 robot
@@ -104,6 +104,27 @@ Before command generation:
 - Run `puda machine commands opentrons` to understand available commands
 - Follow all command types, params, sequencing rules, and labware constraints in `references/opentrons-machine.md`
 
+### Elephant Machine (`machine_id: "elephant"`)
+
+Use for **6-axis robot arm manipulation, Cartesian/joint motion, electric gripper actions, scan/reset flows, and camera-guided vision steps**.
+
+Capabilities:
+- Cartesian pose motion and relative moves
+- Joint-angle and single-axis motion controls
+- Scan positioning and reset-oriented recovery workflows
+- Electric gripper operations: `init_gripper`, `open_gripper`, `close_gripper`
+- Pi-camera and livestream image capture for vision-guided tasks
+- Pixel-to-robot offset conversion for calibrated camera workflows
+
+Use this machine when:
+- The task requires a robot arm to move to coordinates or execute pick-and-place style steps
+- The user asks for Elephant arm motion, scan/reset behavior, or arm recovery after stop/power loss
+- The workflow includes gripper control, Pi-camera capture, or livestream snapshot capture from the Elephant setup
+
+Before command generation:
+- Refer to: [elephant-machine](references/elephant.md)
+- Run `puda machine commands elephant` to understand available commands
+- Follow motion, gripper, camera, and sequencing constraints in `references/elephant.md`
 
 ## Selection Workflow
 
@@ -121,7 +142,7 @@ When answering machine-selection questions:
 
 ## Critical sequencing rules
 - `opentrons` protocols must always end with no tip attached to any pipette.
-- `opentrons` deck slot (`location`) for every `load_labware` command must be explicitly confirmed by the user — **never assume a slot**.
-- `opentrons` `capture_image` must be its own standalone protocol — never combined with pipetting commands in the same protocol.
-- `balance` — always call `startup()` before reading and `shutdown()` after. Always tare before a dispense step. Always verify `fresh == True` before using a reading.
-
+- `opentrons` deck slot (`location`) for every `load_labware` command must be explicitly confirmed by the user - **never assume a slot**.
+- `opentrons` `capture_image` must be its own standalone protocol - never combined with pipetting commands in the same protocol.
+- `balance` - always call `startup()` before reading and `shutdown()` after. Always tare before a dispense step. Always verify `fresh == True` before using a reading.
+- `elephant` - ensure the arm is connected and powered before motion. For electric gripper workflows after a power cycle, call `init_gripper()` before `open_gripper()` or `close_gripper()`. Prefer `scan()` before camera-guided work.
