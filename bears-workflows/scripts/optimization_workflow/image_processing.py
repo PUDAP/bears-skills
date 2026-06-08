@@ -77,7 +77,7 @@ class ImageConfig:
 # Adjust src_corners if the camera is repositioned.
 # Adjust plate_width/plate_height to control warp output resolution.
 DEFAULT_CONFIG = ImageConfig(
-    src_corners=[(328, 378), (457, 380), (457, 466), (325, 465)],
+    src_corners=[(330, 380), (457, 380), (457, 466), (327, 465)],
     dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
     plate_width=1800,
     plate_height=1200,
