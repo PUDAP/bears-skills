@@ -34,7 +34,7 @@ The gripper is aligned when `abs(offset_px) <= tolerance_px`.
 - Elephant Robotics Pro630 connected on robot port `5001`
 - Electric gripper with two visible tape markers
 - Logitech C920e / CAM2 side-view camera
-- YOLO model that can detect:
+- Trained YOLO model at `bears-skills/bears-workflows/references/elephant/yolov8n.pt` that can detect:
   - the target object class
   - the tape markers, with class names containing `tape`, `silver`, or `white_strip`
 
@@ -68,7 +68,7 @@ CAM2 YOLO image:       http://127.0.0.1:5000/snapshot/cam2_yolo
 Start the viewer with:
 
 ```bash
-python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --start-pi-stream --pi-stream-port 5000 --workdir reports/elephant_camera --cam2-stream-url rtsp://100.125.227.14:8554/livestream --yolo-model-path elephant/yolov8n.pt
+python -m elephant_driver.combined_viewer --pi-ip 192.168.50.128 --start-pi-stream --pi-stream-port 5000 --workdir reports/elephant_camera --cam2-stream-url rtsp://100.125.227.14:8554/livestream --yolo-model-path bears-skills/bears-workflows/references/elephant/yolov8n.pt
 ```
 
 ## Configuration Values

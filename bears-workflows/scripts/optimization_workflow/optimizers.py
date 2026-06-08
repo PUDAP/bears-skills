@@ -29,10 +29,12 @@ Environment variable (LLM optimizers):
 from __future__ import annotations
 
 import json
+import math
 import re
 import os
 from abc import ABC, abstractmethod
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from openai import OpenAI
 
@@ -55,6 +57,13 @@ except ImportError:
 # OpenRouter model shorthand lookup
 # ---------------------------------------------------------------------------
 
+@dataclass
+class SuggestionResult:
+    volumes: list[float]
+    optimizer: Literal["BO", "LLM"]
+    llm_reasoning: str | None = None
+
+
 OPENROUTER_MODELS: dict[str, str] = {
     "gpt-4o":            "openai/gpt-4o",
     "gpt-4.1":           "openai/gpt-4.1",
@@ -70,6 +79,7 @@ OPENROUTER_MODELS: dict[str, str] = {
     "deepseek-r2":       "deepseek/deepseek-r2",
     "deepseek-chat-v3":  "deepseek/deepseek-chat-v3-0324",
     "deepseek-v3.2":     "deepseek/deepseek-v3.2",
+    "deepseek-v4-pro":   "deepseek/deepseek-v4-pro",
     "qwen3.5-plus":      "qwen/qwen3.5-plus-02-15",
     "qwen3-max":         "qwen/qwen3-max",
     "glm-5.1":           "z-ai/glm-5.1",
@@ -233,23 +243,31 @@ class SOCM_BO(ABC):
         self._train_X.append([v / self.total_volume for v in volumes])
         self._train_Y.append(-delta_e_2000)
 
-    def suggest(self) -> list[float]:
+    def suggest(self, method: str = "bo") -> SuggestionResult:
         """
-        Suggest the next (R_vol, G_vol, B_vol, water_vol) in µL.
+        Suggest the next (R_vol, G_vol, B_vol, water_vol) in uL.
 
-        Refits the GP on all observations and optimises the acquisition function
-        subject to the equality constraint x1 + x2 + x3 + x4 = 1 (normalised space),
-        which guarantees the returned volumes sum to total_volume.
+        BO mode uses BoTorch ``optimize_acqf()``. The method argument is accepted
+        so colour-mixing BO and LLM optimizers expose the same public interface.
 
         Returns:
-            [R_vol, G_vol, B_vol, water_vol] in µL, guaranteed to sum to total_volume.
+            SuggestionResult with validated volumes and no LLM reasoning.
 
         Raises:
             RuntimeError: If called before any observations have been recorded.
+            ValueError: If method is not ``"bo"``.
         """
         if not self._train_X:
             raise RuntimeError("No observations recorded. Call observe() first.")
 
+        method = method.lower().strip()
+        if method != "bo":
+            raise ValueError(f"Unsupported suggestion method for BO optimizer: {method}")
+
+        return self._suggest_bo()
+
+    def _suggest_bo(self) -> SuggestionResult:
+        """BO suggestion using BoTorch ``optimize_acqf()``."""
         train_X = torch.tensor(self._train_X, dtype=torch.double)
         train_Y = torch.tensor(self._train_Y, dtype=torch.double).unsqueeze(-1)
 
@@ -265,7 +283,8 @@ class SOCM_BO(ABC):
             equality_constraints=self._EQUALITY_CONSTRAINTS,
         )
 
-        return self._denormalise_and_constrain(candidate)
+        volumes = self._denormalise_and_constrain(candidate)
+        return SuggestionResult(volumes=volumes, optimizer="BO")
 
     @property
     def n_observations(self) -> int:
@@ -342,7 +361,7 @@ class SOCM_BOEI(SOCM_BO):
         optimizer = SOCM_BOEI(total_volume=300.0, xi=0.01)
         for volumes, delta_e_2000 in x_init_results:
             optimizer.observe(volumes, delta_e_2000)
-        next_volumes = optimizer.suggest()
+        next_volumes = optimizer.suggest().volumes
     """
 
     def __init__(
@@ -399,7 +418,7 @@ class SOCM_BOLCB(SOCM_BO):
         optimizer = SOCM_BOLCB(total_volume=300.0, beta=1.0)
         for volumes, delta_e_2000 in x_init_results:
             optimizer.observe(volumes, delta_e_2000)
-        next_volumes = optimizer.suggest()
+        next_volumes = optimizer.suggest().volumes
     """
 
     def __init__(
@@ -452,7 +471,7 @@ class SOCM_LLM:
         )
         for volumes, rgb, delta_e_2000 in x_init_results:
             optimizer.observe(volumes, rgb, delta_e_2000)
-        next_volumes = optimizer.suggest()
+        next_volumes = optimizer.suggest().volumes
     """
 
     def __init__(
@@ -477,6 +496,7 @@ class SOCM_LLM:
         self._client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
+            timeout=120.0,
         )
 
         # Each entry: {"iteration": int, "volumes": [R,G,B,water], "rgb": (R,G,B), "delta_e_2000": float}
@@ -502,20 +522,31 @@ class SOCM_LLM:
             "delta_e_2000": delta_e_2000,
         })
 
-    def suggest(self) -> list[float]:
+    def suggest(self, method: str = "llm") -> SuggestionResult:
         """
-        Ask the LLM for the next ``(R_vol, G_vol, B_vol, water_vol)`` in µL
-        (sum = ``total_volume``).
+        Ask the LLM for the next ``(R_vol, G_vol, B_vol, water_vol)`` in uL
+        and return validated volumes plus report reasoning.
         """
-        volumes, _reasoning = self.suggest_with_reasoning()
-        return volumes
+        method = method.lower().strip()
+        if method != "llm":
+            raise ValueError(f"Unsupported suggestion method for LLM optimizer: {method}")
+        return self._suggest_llm()
+
+    def _suggest_llm(self) -> SuggestionResult:
+        """LLM suggestion with validated numeric volumes plus report reasoning."""
+        volumes, reasoning = self.suggest_with_reasoning()
+        return SuggestionResult(
+            volumes=volumes,
+            optimizer="LLM",
+            llm_reasoning=reasoning,
+        )
 
     def suggest_with_reasoning(self) -> tuple[list[float], str]:
         """
-        Ask for strict numeric JSON first, then capture concise reasoning.
+        Ask for one strict JSON object containing numeric volumes and concise reasoning.
 
-        Reasoning is requested only after the numeric suggestion validates, so
-        protocol generation still uses validated numbers only.
+        Protocol generation still uses only the validated numeric volume fields;
+        the reasoning field is recorded for reports and never drives liquid handling.
         """
         if not self._history:
             raise RuntimeError("No observations recorded. Call observe() first.")
@@ -525,8 +556,7 @@ class SOCM_LLM:
             prompt = self._build_prompt(validation_error=validation_error)
             try:
                 raw = self._call_model(prompt)
-                volumes = self._parse_and_validate(raw)
-                reasoning = self.explain_suggestion(volumes)
+                volumes, reasoning = self._parse_validate_and_reasoning(raw)
                 self.last_reasoning = reasoning
                 return volumes, reasoning
             except (json.JSONDecodeError, KeyError, ValueError) as exc:
@@ -568,15 +598,21 @@ class SOCM_LLM:
             "## What to return",
             "Suggest the next (R_vol, G_vol, B_vol, water_vol) in µL that you expect will **reduce Delta E 2000**.",
             f"Volumes must sum to exactly {self.total_volume} µL (±1 µL).",
+            "Include a concise reason for this numeric suggestion in the same JSON object.",
+            "The reasoning is for the report only; the protocol will use only the validated volume fields.",
             "Reply with JSON only, no markdown fences or extra text:",
-            '{"R_vol": <number>, "G_vol": <number>, "B_vol": <number>, "water_vol": <number>}',
+            (
+                '{"R_vol": <number>, "G_vol": <number>, "B_vol": <number>, '
+                '"water_vol": <number>, "reasoning": "<1-3 concise sentences>"}'
+            ),
         ]
         if validation_error:
             lines += [
                 "",
                 "## Fix your previous reply",
                 f"The last response was invalid: {validation_error}",
-                "Reply again with one JSON object only; volumes must sum to "
+                "Reply again with one JSON object only; it must contain R_vol, "
+                "G_vol, B_vol, water_vol, and reasoning. Volumes must sum to "
                 f"{self.total_volume} µL (±1 µL).",
             ]
         return "\n".join(lines)
@@ -585,7 +621,7 @@ class SOCM_LLM:
         if len(volumes) == 3:
             volumes = [*volumes, self.total_volume - sum(float(v) for v in volumes)]
         r, g, b, w = volumes
-        lines = [
+        lines = [   
             "# RGB colour mixing optimization reasoning",
             "",
             "Explain concisely why this validated next mix was suggested.",
@@ -651,248 +687,62 @@ class SOCM_LLM:
             raise ValueError(
                 "Expected a JSON object with R_vol, G_vol, B_vol, and water_vol."
             )
-        r = float(data["R_vol"])
-        g = float(data["G_vol"])
-        b = float(data["B_vol"])
-        w = float(data["water_vol"])
+        return self._validate_llm_suggestion(
+            [data["R_vol"], data["G_vol"], data["B_vol"], data["water_vol"]]
+        )
 
-        if abs(r + g + b + w - self.total_volume) > 1.0:
+    def _parse_validate_and_reasoning(self, response: str) -> tuple[list[float], str]:
+        """
+        Parse one JSON response containing both volumes and report reasoning.
+
+        Returns:
+            ``([R_vol, G_vol, B_vol, water_vol], reasoning)``. Only the volume
+            fields are used for protocol generation; reasoning is report text.
+        """
+        cleaned = _extract_first_json_object_text(response)
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
             raise ValueError(
-                f"Volumes sum to {r + g + b + w:.2f} µL, expected {self.total_volume} µL (±1 µL)."
+                "Expected a JSON object with R_vol, G_vol, B_vol, water_vol, and reasoning."
             )
 
-        return [r, g, b, w]
+        volumes = self._validate_llm_suggestion(
+            [data["R_vol"], data["G_vol"], data["B_vol"], data["water_vol"]]
+        )
+        reasoning = str(data.get("reasoning", "")).strip()
+        if not reasoning:
+            raise ValueError("LLM response must include a non-empty reasoning field.")
+        return volumes, reasoning
+
+    def _validate_llm_suggestion(self, suggestion: list[float]) -> list[float]:
+        """
+        Validate LLM output and return constrained RGBy volumes in uL.
+
+        The LLM may provide ratios or raw volumes. Either form is normalised and
+        rescaled to ``self.total_volume`` after basic numeric safety checks.
+        """
+        if suggestion is None:
+            raise ValueError("LLM response does not contain a numeric suggestion.")
+        if len(suggestion) != 4:
+            raise ValueError(
+                f"LLM suggestion must contain 4 values: R, G, B, water. Got {suggestion}"
+            )
+
+        values = [float(x) for x in suggestion]
+        if any(not math.isfinite(x) for x in values):
+            raise ValueError(f"LLM suggestion contains non-finite values: {values}")
+        if any(x < 0 for x in values):
+            raise ValueError(f"LLM suggestion contains negative values: {values}")
+
+        total = sum(values)
+        if total <= 0:
+            raise ValueError(f"LLM suggestion sum must be positive. Got {values}")
+
+        ratios = [x / total for x in values]
+        return [x * self.total_volume for x in ratios]
 
 
 LLMOptimizer = SOCM_LLM
-
-
-# ---------------------------------------------------------------------------
-# Viscosity optimization — single-objective Bayesian (SOVH)
-# ---------------------------------------------------------------------------
-
-class SOVH_BO(ABC):
-    """
-    Single-objective Bayesian Optimization for viscosity / transfer tuning:
-    minimise **absolute** transfer error (µL) over box-bounded protocol parameters.
-
-    Observations use **signed error** ``actual − target`` (µL). The GP surrogate
-    target depends on the subclass (see :class:`SOVH_EI` and
-    :class:`SOVH_LCB`).
-
-    Each parameter is mapped linearly to ``[0, 1]``.
-
-    Args:
-        param_bounds: Ordered ``(name, min, max)`` for each tunable parameter.
-            Names must match keys passed to :meth:`observe`.
-        num_restarts: Restarts for acquisition optimisation. Default: 10.
-        raw_samples: Raw samples for initialising the optimisation. Default: 64.
-    """
-
-    def __init__(
-        self,
-        param_bounds: list[tuple[str, float, float]],
-        num_restarts: int = 10,
-        raw_samples: int = 64,
-    ) -> None:
-        if not _BO_AVAILABLE:
-            raise ImportError(
-                "SOVH optimizers require torch, botorch, and gpytorch. "
-                "Install with: pip install botorch gpytorch torch"
-            )
-        if not param_bounds:
-            raise ValueError("param_bounds must contain at least one parameter.")
-
-        self._names = [p[0] for p in param_bounds]
-        if len(set(self._names)) != len(self._names):
-            raise ValueError("Parameter names in param_bounds must be unique.")
-
-        self._mins = torch.tensor([p[1] for p in param_bounds], dtype=torch.double)
-        self._maxs = torch.tensor([p[2] for p in param_bounds], dtype=torch.double)
-        if bool(torch.any(self._maxs <= self._mins)):
-            raise ValueError("Each parameter requires max > min.")
-
-        self.n_dims = len(param_bounds)
-        self.num_restarts = num_restarts
-        self.raw_samples = raw_samples
-
-        self._bounds = torch.zeros(2, self.n_dims)
-        self._bounds[1] = 1.0
-
-        self._train_X: list[list[float]] = []
-        self._train_Y: list[float] = []
-        self._train_signed_ul: list[float] = []
-        self._train_abs_ul: list[float] = []
-
-    def observe(
-        self,
-        params: dict[str, float],
-        signed_error_ul: float,
-        *,
-        absolute_error_ul: float | None = None,
-    ) -> None:
-        """
-        Record a new observation.
-
-        Args:
-            params: Current parameter values (physical units), one key per name
-                in ``param_bounds``.
-            signed_error_ul: ``actual_volume − target_volume`` (µL). Drives the
-                surrogate (subclass-specific transform toward minimising absolute error).
-            absolute_error_ul: Optional ``|signed_error_ul|`` if already known;
-                otherwise computed as ``abs(signed_error_ul)``.
-        """
-        x: list[float] = []
-        for i, name in enumerate(self._names):
-            if name not in params:
-                raise KeyError(f"Missing parameter {name!r} in params.")
-            lo, hi = self._mins[i].item(), self._maxs[i].item()
-            v = float(params[name])
-            x.append((v - lo) / (hi - lo))
-        s = float(signed_error_ul)
-        abs_e = float(absolute_error_ul) if absolute_error_ul is not None else abs(s)
-        self._train_X.append(x)
-        self._train_signed_ul.append(s)
-        self._train_abs_ul.append(abs_e)
-        self._train_Y.append(self._compute_gp_target(s, abs_e))
-
-    @abstractmethod
-    def _compute_gp_target(self, signed_error_ul: float, absolute_error_ul: float) -> float:
-        """Scalar label for the GP at this observation (subclass defines link to minimising abs error)."""
-
-    def suggest(self) -> dict[str, float]:
-        """
-        Suggest the next parameter dict in physical units.
-
-        Returns:
-            ``{name: value, ...}`` within each parameter's ``[min, max]``.
-
-        Raises:
-            RuntimeError: If called before any observation.
-        """
-        if not self._train_X:
-            raise RuntimeError("No observations recorded. Call observe() first.")
-
-        train_X = torch.tensor(self._train_X, dtype=torch.double)
-        train_Y = torch.tensor(self._train_Y, dtype=torch.double).unsqueeze(-1)
-
-        model = self._fit_model(train_X, train_Y)
-        acquisition = self._build_acquisition(model, train_Y)
-
-        candidate, _ = optimize_acqf(
-            acq_function=acquisition,
-            bounds=self._bounds,
-            q=1,
-            num_restarts=self.num_restarts,
-            raw_samples=self.raw_samples,
-        )
-
-        return self._denormalise_box(candidate)
-
-    @property
-    def n_observations(self) -> int:
-        return len(self._train_X)
-
-    def _fit_model(self, train_X: torch.Tensor, train_Y: torch.Tensor) -> SingleTaskGP:
-        model = SingleTaskGP(train_X, train_Y)
-        mll = ExactMarginalLogLikelihood(model.likelihood, model)
-        fit_gpytorch_mll(mll)
-        return model
-
-    def _denormalise_box(self, candidate: torch.Tensor) -> dict[str, float]:
-        """Map normalised [0,1]^d candidate to physical parameter values."""
-        c = candidate.squeeze().clamp(0.0, 1.0)
-        vals = self._mins + c * (self._maxs - self._mins)
-        return {name: float(vals[i].item()) for i, name in enumerate(self._names)}
-
-    @abstractmethod
-    def _build_acquisition(self, model: SingleTaskGP, train_Y: torch.Tensor):
-        """Build the acquisition function for this SOVH variant."""
-
-
-class SOVH_EI(SOVH_BO):
-    """
-    Viscosity single-objective BO using Expected Improvement (LogEI).
-
-    The GP is fit on ``-(signed_error_ul ** 2)`` (≤ 0), which is maximised when
-    signed error is near zero — equivalent to reducing absolute transfer error.
-
-    Args:
-        param_bounds: Same as :class:`SOVH_BO`.
-        xi (float): Exploration bonus added to the current best observed value
-            before computing EI.  ``xi > 0`` encourages more exploration;
-            ``xi = 0`` is pure exploitation-focused EI.  Default: ``0.01``.
-        num_restarts: Restarts for acquisition optimisation. Default: 10.
-        raw_samples: Raw samples for initialisation. Default: 64.
-
-    Example:
-        opt = SOVH_EI(
-            [("aspirate_rate", 10.0, 150.0), ("dispense_rate", 10.0, 150.0)],
-            xi=0.01,
-        )
-        opt.observe({"aspirate_rate": 50.0, "dispense_rate": 50.0}, signed_error_ul=3.0)
-        nxt = opt.suggest()
-    """
-
-    def __init__(
-        self,
-        param_bounds: list[tuple[str, float, float]],
-        xi: float = 0.01,
-        num_restarts: int = 10,
-        raw_samples: int = 64,
-    ) -> None:
-        super().__init__(param_bounds, num_restarts, raw_samples)
-        self.xi = xi
-
-    def _compute_gp_target(self, signed_error_ul: float, absolute_error_ul: float) -> float:
-        return -(signed_error_ul ** 2)
-
-    def _build_acquisition(
-        self, model: SingleTaskGP, train_Y: torch.Tensor
-    ) -> LogExpectedImprovement:
-        return LogExpectedImprovement(model=model, best_f=train_Y.max() + self.xi)
-
-
-class SOVH_LCB(SOVH_BO):
-    """
-    Viscosity single-objective BO using ``UpperConfidenceBound`` with
-    ``maximize=False`` to **minimise absolute transfer error** (µL).
-
-    The GP is fit on **positive** ``absolute_error_ul``; the acquisition explores
-    regions expected to lower that scalar. Signed error is still required in
-    :meth:`observe` so absolute error is defined consistently (use
-    ``absolute_error_ul`` override if you measure abs directly).
-
-    Args:
-        param_bounds: Same as :class:`SOVH_BO`.
-        beta: UCB exploration weight (variance term). Default: 1.0.
-        num_restarts: Restarts for acquisition optimisation.
-        raw_samples: Raw samples for initialisation.
-    """
-
-    def __init__(
-        self,
-        param_bounds: list[tuple[str, float, float]],
-        beta: float = 1.0,
-        num_restarts: int = 10,
-        raw_samples: int = 64,
-    ) -> None:
-        super().__init__(param_bounds, num_restarts, raw_samples)
-        self.beta = beta
-
-    def _compute_gp_target(self, signed_error_ul: float, absolute_error_ul: float) -> float:
-        return absolute_error_ul
-
-    def _build_acquisition(
-        self, model: SingleTaskGP, train_Y: torch.Tensor
-    ) -> UpperConfidenceBound:
-        return UpperConfidenceBound(model=model, beta=self.beta, maximize=False)
-
-
-# Backward-compatible aliases (SOVH)
-ViscosityBOOptimizerBase = SOVH_BO
-ViscosityBOOptimizerEI = SOVH_EI
-ViscosityBOOptimizerLCB = SOVH_LCB
 
 
 # ---------------------------------------------------------------------------
@@ -982,6 +832,7 @@ class SOVH_LLM:
         self._client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ["OPENROUTER_API_KEY"],
+            timeout=120.0,
         )
 
         self._history: list[dict[str, Any]] = []
@@ -1266,4 +1117,3 @@ class SOVH_LLM:
 
 
 ViscosityLLMOptimizer = SOVH_LLM
-
