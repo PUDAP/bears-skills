@@ -12,6 +12,9 @@ import math
 from typing import Any
 
 
+DELTA_E_STOP_THRESHOLD = 5.0
+MAX_OPTIMIZATION_ITERATIONS = 12
+
 
 def _srgb_channel_to_linear(channel: int) -> float:
     """Convert one sRGB channel (0-255) to linear RGB (0-1)."""
@@ -146,20 +149,34 @@ def calculate_delta_e_2000(
 
 def stop_condition_reached(
     iteration: int,
-    max_iterations: int,
+    delta_e_2000: float | None = None,
+    *,
+    max_iterations: int = MAX_OPTIMIZATION_ITERATIONS,
+    delta_e_threshold: float = DELTA_E_STOP_THRESHOLD,
 ) -> tuple[bool, str]:
     """
     Check whether the optimization stop condition has been reached.
 
     Args:
         iteration: Current iteration number (1-indexed).
-        max_iterations: Maximum number of iterations allowed.
+        delta_e_2000: Latest Delta E 2000 value from the current iteration.
+        max_iterations: Maximum number of optimization iterations allowed.
+            Values above 12 are capped at 12 for this workflow.
+        delta_e_threshold: Stop when Delta E 2000 is below this threshold.
 
     Returns:
         (stopped, reason) where stopped is True if the loop should end.
     """
-    if iteration >= max_iterations:
-        return True, f"Reached maximum iterations ({max_iterations})"
+    if delta_e_2000 is not None and delta_e_2000 < delta_e_threshold:
+        return True, (
+            f"Reached Delta E 2000 threshold "
+            f"({delta_e_2000:.4f} < {delta_e_threshold:g})"
+        )
+
+    effective_max_iterations = min(max_iterations, MAX_OPTIMIZATION_ITERATIONS)
+    if iteration >= effective_max_iterations:
+        return True, f"Reached maximum iterations ({effective_max_iterations})"
+
     return False, ""
 
 
