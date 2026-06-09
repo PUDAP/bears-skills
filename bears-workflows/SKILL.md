@@ -173,6 +173,6 @@ When answering experiment-selection questions:
 9. For viscosity optimization, use balance readings as `mass_mg`, process data with `scripts/optimization_workflow/balance_data_process.py`, and pick up tips sequentially from `A1`, `A2`, `A3`, `A4`, then row-major through the rack.
 10. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 11. Opentrons protocols must always end with no tip attached to any pipette.
-12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol. Build dispense protocols with `build_colour_mixing_protocol()` — no `pipette.mix()`, no `blow_out()` between layers, and one fresh tip per non-zero component.
+12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.
 13. **Ask user if unsure — do not assume**.
 14. **Elephant pickup:** CAM2 align at `z_touch + 15 mm` before `z_touch` or `close_gripper`; `move` speed ≤ 100; rotations in [-180, 180]. See [elephant-pickup-object](references/elephant/elephant-pickup-object.md).
