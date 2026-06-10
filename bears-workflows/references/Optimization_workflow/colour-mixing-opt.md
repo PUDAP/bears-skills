@@ -26,7 +26,7 @@ At any time:
 - Each iteration sues a **NEW run_id**
 -No downstream step executres unless the run is **confirmed successful**
 - Every mix must contain four explicitly specified components: **red, green, blue, and water**. Never generate a colour-mixing protocol from only R, G, and B volumes.
-- The user-provided `total_volume` is the **maximum and exact final liquid volume per destination well per mix**. The sum of all aspirated/dispensed component volumes for one destination well must equal `total_volume` within +/-1 uL. Do not repeat component transfers, split component volumes, or add mixing-transfer repetitions that cause the actual dispensed volume to exceed `total_volume`.
+
 
 ## Optimization Approaches
 
