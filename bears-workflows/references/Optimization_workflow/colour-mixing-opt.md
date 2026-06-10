@@ -83,7 +83,6 @@ Collect all of the following before starting. Do not proceed until every value i
 | `x_init` — 3 initial mixes | User-provided volume sets (see below) |
 | `x_init` destination wells | Three user-selected destination wells, one for each `x_init` mix |
 | Optimization approach | BO (EI or LCB) or LLM (choose model) |
-| Delta E stop threshold | User-selected Delta E 2000 threshold for stopping; default is `5` if not specified |
 | Maximum iterations | Stop after this many iterations; default and maximum allowed value is 12 |
 
 **Critical — RGB dye labware and water source use separate deck positions**
@@ -149,7 +148,6 @@ The confirmation summary must include:
 - All 3 `x_init` volume combinations
 - All 3 `x_init` destination wells and their mapping to the initial volume combinations
 - Optimization approach
-- Delta E stop threshold
 - Maximum iterations
 
 
@@ -305,7 +303,6 @@ Example `x_init` log block:
 | Iteration | <N> |
 | Image saved | colour-RGB-<Sample name that user input>-<N>.jpg |
 | Target colour RGB | (<R_target>, <G_target>, <B_target>) |
-| Delta E stop threshold | <delta_e_threshold> |
 | Next suggested ratio (R, G, B, water) | (<R_next> µL, <G_next> µL, <B_next> µL, <water_next> µL) |
 | LLM reasoning | <include only when LLM optimizer was used: concise reasoning behind the suggested ratio> |
 | Stop condition reached | Yes / No |
@@ -343,24 +340,21 @@ For every target mix, `x_init` mix, and BO/LLM-suggested iteration:
 
 ### Phase 3 — Stop Condition
 
-Stop when either condition is met:
+Stop only when the maximum optimization iteration limit is reached.
 
 | Condition | Description |
 |---|---|
-| `delta_e < delta_e_threshold` | Target colour match reached; use the user-confirmed Delta E 2000 stop threshold and the Delta E 2000 value from the latest optimization iteration |
-| `iteration >= 12` | Maximum optimization iterations reached (not counting the 3 `x_init` mixes) |
+| `iteration >= max_iterations` | Maximum optimization iterations reached (not counting the 3 `x_init` mixes) |
 
-Before starting, ask the user for the Delta E 2000 stop threshold. If the user does not specify one, use the default threshold `5`. Validate that the threshold is numeric and greater than 0.
-
-After every optimization iteration, evaluate the latest Delta E 2000 value first. If `delta_e < delta_e_threshold`, stop immediately and mark `Stop condition reached` as `Yes` in that iteration's report block. If the target threshold is not met, continue until `iteration >= 12`, then stop and mark `Stop condition reached` as `Yes` in the iteration 12 report block.
+After every optimization iteration, record the latest Delta E 2000 value for reporting and optimizer history, but do not stop early based on Delta E. Continue until `iteration >= max_iterations`, then stop and mark `Stop condition reached` as `Yes` in the final iteration report block.
 
 On stop: generate a final summary report using the markdown structure defined in this document, and write it to `colour-mixing-report-<sample name that user input>.md` at the save path resolved by the **puda-report** skill.
 
 ## Rules
 
 - Always ask for target colour source before starting.
-- Ask for the Delta E 2000 stop threshold before starting. If not specified, use `5`. Validate that the threshold is numeric and greater than 0.
-- Stop optimization when the latest optimization-iteration `Delta E 2000 < delta_e_threshold`, or when 12 optimization iterations have been reached. The 3 `x_init` mixes are seed observations and do not count toward the 12-iteration limit.
+- Ask for the maximum optimization iterations before starting. The default and maximum allowed value is 12.
+- Stop optimization only when the configured maximum optimization iterations have been reached. The 3 `x_init` mixes are seed observations and do not count toward the iteration limit.
 - If target colour source is `manual_rgb`, validate and use the user-provided target RGB.
 - If target colour source is `measured_target_mix`, run the target-mix calibration, process the target well image, and use the measured RGB as the target before generating `x_init`.
 - Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
