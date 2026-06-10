@@ -87,17 +87,6 @@ The following rules **must** be strictly followed when generating Opentrons comm
 - **`transfer`** auto-chunks volumes exceeding the pipette max — no manual chunking needed. Max per chunk: 1000 µL for `p1000`, 300 µL for `p300`, 20 µL for all others.
 - **`height_from_bottom` / z offset**: Must be non-negative (≥ 0).
 
-### Volume Integrity
-
-- A requested component volume is the total liquid to add from that source to that destination.
-- Generate one `transfer` or one `aspirate`/`dispense` pair per non-zero component unless that component volume exceeds the pipette maximum.
-- For direct Python protocols, each non-zero component must use one `pipette.aspirate(component_volume, component_source)` immediately followed by one `pipette.dispense(component_volume, dest_well)`. Do not add a second aspirate, pre-wet aspirate, air-gap aspirate, disposal-volume aspirate, or any other liquid-moving command before the matching dispense.
-- If chunking is required, the chunks must sum exactly to the requested component volume. Chunking must never add extra volume.
-- Never repeat the same component transfer for mixing, priming, or loop structure in a way that dispenses extra liquid into the destination well.
-- For colour-mixing protocols, do not generate `pipette.mix(...)`, `mix_before`, or `mix_after` unless the user explicitly requests post-dispense mixing. If mixing is explicitly requested, explain that it appears as extra aspirate/dispense cycles inside the destination well and must not aspirate from any source well or count as additional source volume.
-- For colour-mixing protocols, verify each destination well receives exactly the requested `(R, G, B, water)` total and never more than the user-confirmed per-well `total_volume` tolerance.
-- Before upload, inspect the generated Python. The number of explicit `pipette.aspirate(...)` and `pipette.dispense(...)` calls must equal the number of non-zero components, unless true pipette-capacity chunking is required. Reject any colour-mixing protocol containing `pipette.mix(...)`, `air_gap`, `transfer`, `mix_before`, or `mix_after` unless the user explicitly approved those extra liquid-motion commands.
-
 ### Pipette Types
 
 | Pipette type | Volume range | Channels |
