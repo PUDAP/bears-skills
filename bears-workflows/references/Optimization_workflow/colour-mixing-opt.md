@@ -167,7 +167,19 @@ Tip usage must advance in row-major order on the tip rack:
 ```text
 A1, A2, A3, ... A12, B1, B2, ... H12
 ```
-Use tips strictly in that exact order across the target-mix calibration run, `x_init`, and all later iterations. For example, if `manual_rgb` is used and `x_init` uses 3 tips, they must be `A1`, `A2`, `A3`; the next iteration must continue with `A4`, then `A5`, then `A6`, and so on. If `measured_target_mix` uses 1 tip first, that target run must use `A1`, `x_init` must continue with `A2`, `A3`, `A4`, and the next iteration must continue from `A5`.
+Use a new tip for every non-zero component transfer. A single tip must never be reused across red, green, blue, or water sources. For each non-zero component, the generated protocol must follow:
+
+```python
+pipette.pick_up_tip(next_tip)
+pipette.aspirate(component_volume, component_source)
+pipette.dispense(component_volume, dest_well)
+pipette.blow_out(dest_well.top())
+pipette.drop_tip()
+```
+
+Then advance to the next row-major tip for the next non-zero component. Skip zero-volume components and do not pick up a tip for them.
+
+Use tips strictly in row-major order across the target-mix calibration run, `x_init`, and all later iterations. Tip counts are based on non-zero component transfers, not wells. For example, one mix with non-zero red, blue, and water uses 3 tips. Three `x_init` mixes with all four components non-zero use 12 tips. If `manual_rgb` is used and the first `x_init` mix has all four components non-zero, it must use `A1`, `A2`, `A3`, `A4`; the next mix continues with `A5`. If `measured_target_mix` uses four non-zero components first, that target run must use `A1` through `A4`, and `x_init` must continue from `A5`.
 
 **Execution Sequence (MUST FOLLOW EXACTLY)**
 1. Upload protocol
@@ -314,16 +326,18 @@ Use **puda-protocol** to generate a new protocol with the suggested volumes and 
 
 **Critical - Liquid volume execution must match the optimizer tuple exactly**
 
+Generate colour-mixing Opentrons Python with the helper [../../scripts/optimization_workflow/build_colour_mixing_protocol.py](../../scripts/optimization_workflow/build_colour_mixing_protocol.py). Do not freehand `upload_and_run` Python for colour-mixing liquid transfers unless the helper is unavailable and the generated code is manually checked against the rules below.
+
 For every target mix, `x_init` mix, and BO/LLM-suggested iteration:
 - Treat `(R_vol, G_vol, B_vol, water_vol)` as absolute dispense volumes in uL, not as volumes to repeat.
-- For each non-zero component, generate exactly one transfer or one aspirate-dispense pair from that component source into the destination well unless a single component volume exceeds the selected pipette's maximum capacity. With a `p300`, a 300 uL component is one operation, not two.
-- The generated Python for each component must follow this exact liquid-handling pattern: one `pipette.aspirate(component_volume, component_source)` immediately followed by one `pipette.dispense(component_volume, dest_well)`. Do not insert a second aspirate, pre-wet aspirate, air-gap aspirate, disposal-volume aspirate, touch-volume aspirate, or any other liquid-moving command before the matching dispense.
+- For each non-zero component, generate exactly one explicit fresh-tip aspirate-dispense block from that component source into the destination well unless a single component volume exceeds the selected pipette's maximum capacity. Do not use `transfer()` or `distribute()` for colour-mixing liquid additions, because those helpers can introduce extra aspiration-like motions such as disposal volume, refills, or blow-out return behavior. With a `p300`, a 300 uL component is one aspirate and one dispense operation, not two.
+- The generated Python for each non-zero component must follow this exact liquid-handling pattern with a fresh tip: one `pipette.pick_up_tip(next_tip)`, one `pipette.aspirate(component_volume, component_source)`, one `pipette.dispense(component_volume, dest_well)`, one `pipette.blow_out(dest_well.top())`, and one `pipette.drop_tip()` before moving to the next component. Do not reuse a tip between components. Do not insert a second aspirate, pre-wet aspirate, air-gap aspirate, disposal-volume aspirate, touch-volume aspirate, or any other liquid-moving command before the matching dispense.
 - If a component volume exceeds the pipette's maximum capacity, split only that component into chunks whose sum equals the requested component volume. The split chunks must not add any extra volume.
-- Do not use protocol-level `mix`, `pipette.mix(...)`, `mix_before`, `mix_after`, repeated transfer loops, or duplicate aspirate/dispense commands as a substitute for colour mixing. A generated colour-mixing protocol should show only the component source aspirate/dispense operations needed to deliver `(R_vol, G_vol, B_vol, water_vol)`, followed by `blow_out`, `drop_tip`, and safe movement/home as needed.
-- Prefer omitting per-component `blow_out` when strict observed one-aspirate/one-dispense execution is required; if a `blow_out` is used, it must occur only after the matching dispense and must not be preceded by any additional aspirate.
+- Do not use protocol-level `mix`, `pipette.mix(...)`, `mix_before`, `mix_after`, repeated transfer loops, or duplicate aspirate/dispense commands as a substitute for colour mixing. A generated colour-mixing protocol should show only fresh-tip component transfers needed to deliver `(R_vol, G_vol, B_vol, water_vol)`, with `blow_out` and `drop_tip` after every non-zero component and safe movement/home as needed.
+- Keep `pipette.blow_out(dest_well.top())` after each component dispense to complete delivery from that component's tip. Because the tip is dropped immediately after `blow_out`, the next component must start with a fresh `pick_up_tip(next_tip)` before aspirating from its source.
 - If the user explicitly requests post-dispense mixing, confirm it separately before execution and state that `pipette.mix(repetitions, volume, dest_well)` will appear as extra aspirate/dispense cycles in the destination well. Those cycles must be excluded from source-volume accounting and must not aspirate from any source well.
 - After protocol generation, compute the planned liquid added to each destination well from the actual pipetting commands. Reject and regenerate the protocol if any destination well receives more than `total_volume` (+/-1 uL tolerance), even if the optimizer suggestion itself summed to `total_volume`.
-- Before uploading a colour-mixing protocol, inspect the generated Python text. For an iteration with four non-zero components, the protocol must contain exactly four explicit `pipette.aspirate(...)` calls and exactly four explicit `pipette.dispense(...)` calls, with no `pipette.mix(...)`, `air_gap`, `transfer`, `mix_before`, or `mix_after`. For zero-volume components, omit that component's aspirate/dispense pair and reduce the expected count accordingly.
+- Before uploading a colour-mixing protocol, inspect the generated Python text. For an iteration with four non-zero components, the protocol must contain exactly four explicit `pipette.pick_up_tip(...)` calls, four explicit `pipette.aspirate(...)` calls, four explicit `pipette.dispense(...)` calls, four explicit `pipette.blow_out(...)` calls, and four explicit `pipette.drop_tip()` calls, with no tip reused between components and no `pipette.mix(...)`, `air_gap`, `transfer`, `mix_before`, or `mix_after`. For zero-volume components, omit that component's full pick-up/aspirate/dispense/blow-out/drop-tip block and reduce the expected count accordingly.
 
 ---
 
