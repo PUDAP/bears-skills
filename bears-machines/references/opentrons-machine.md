@@ -87,6 +87,19 @@ The following rules **must** be strictly followed when generating Opentrons comm
 - **`transfer`** auto-chunks volumes exceeding the pipette max — no manual chunking needed. Max per chunk: 1000 µL for `p1000`, 300 µL for `p300`, 20 µL for all others.
 - **`height_from_bottom` / z offset**: Must be non-negative (≥ 0).
 
+### Volume Integrity
+
+- A requested component volume is the total liquid to add from that source to that destination.
+- For colour-mixing protocols, use a fresh tip for every non-zero component transfer. A single tip must never be reused across red, green, blue, or water sources.
+- Generate one fresh-tip `aspirate`/`dispense` pair per non-zero component unless that component volume exceeds the pipette maximum. Do not use `transfer()` or `distribute()` for colour-mixing liquid additions, because those helpers can introduce extra aspiration-like motions such as disposal volume, refills, or blow-out return behavior.
+- For direct Python colour-mixing protocols, each non-zero component must use one `pipette.pick_up_tip(next_tip)`, one `pipette.aspirate(component_volume, component_source)`, one `pipette.dispense(component_volume, dest_well)`, one `pipette.blow_out(dest_well.top())`, and one `pipette.drop_tip()` before moving to the next component. Do not add a second aspirate, pre-wet aspirate, air-gap aspirate, disposal-volume aspirate, or any other liquid-moving command before the matching dispense. Do not reuse the same tip for the next component.
+- Keep `pipette.blow_out(dest_well.top())` after each component dispense to complete delivery from that component's tip. Because the tip is dropped immediately after `blow_out`, the next component must start with a fresh `pick_up_tip(next_tip)` before aspirating from its source.
+- If chunking is required, the chunks must sum exactly to the requested component volume. Chunking must never add extra volume.
+- Never repeat the same component transfer for mixing, priming, or loop structure in a way that dispenses extra liquid into the destination well.
+- For colour-mixing protocols, do not generate `pipette.mix(...)`, `mix_before`, or `mix_after` unless the user explicitly requests post-dispense mixing. If mixing is explicitly requested, explain that it appears as extra aspirate/dispense cycles inside the destination well and must not aspirate from any source well or count as additional source volume.
+- For colour-mixing protocols, verify each destination well receives exactly the requested `(R, G, B, water)` total and never more than the user-confirmed per-well `total_volume` tolerance.
+- Before upload, inspect the generated Python. The number of explicit `pipette.pick_up_tip(...)`, `pipette.aspirate(...)`, `pipette.dispense(...)`, `pipette.blow_out(...)`, and `pipette.drop_tip()` calls must each equal the number of non-zero components, unless true pipette-capacity chunking is required. Reject any colour-mixing protocol that reuses one tip across multiple components or contains `pipette.mix(...)`, `air_gap`, `transfer`, `distribute`, `mix_before`, or `mix_after` unless the user explicitly approved those extra liquid-motion commands.
+
 ### Pipette Types
 
 | Pipette type | Volume range | Channels |
