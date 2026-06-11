@@ -81,10 +81,12 @@ OPENROUTER_MODELS: dict[str, str] = {
     "deepseek-v3.2":     "deepseek/deepseek-v3.2",
     "deepseek-v4-pro":   "deepseek/deepseek-v4-pro",
     "qwen3.5-plus":      "qwen/qwen3.5-plus-02-15",
+    "qwen3.6plus":       "qwen/qwen3.6-plus",
     "qwen3-max":         "qwen/qwen3-max",
     "glm-5.1":           "z-ai/glm-5.1",
     "glm-4.6":           "z-ai/glm-4.6",
     "kimi-k2.5":         "moonshotai/kimi-k2.5",
+    "kimi-k2.6":         "moonshotai/kimi-k2.6",
     "kimi-k2-0905":      "moonshotai/kimi-k2-0905",
 }
 
