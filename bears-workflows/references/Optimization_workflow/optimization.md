@@ -78,10 +78,12 @@ Ask the user which model to use before initializing. Do not assume a default.
 | `deepseek-chat-v3` | `deepseek/deepseek-chat-v3-0324` |
 | `deepseek-v3.2` | `deepseek/deepseek-v3.2` |
 | `qwen3.5-plus` | `qwen/qwen3.5-plus-02-15` |
+| `qwen3.6plus` | `qwen/qwen3.6-plus` |
 | `qwen3-max` | `qwen/qwen3-max` |
 | `glm-5.1` | `z-ai/glm-5.1` |
 | `glm-4.6` | `z-ai/glm-4.6` |
 | `kimi-k2.5` | `moonshotai/kimi-k2.5` |
+| `kimi-k2.6` | `moonshotai/kimi-k2.6` |
 | `kimi-k2-0905` | `moonshotai/kimi-k2-0905` |
 
 **Usage**:
