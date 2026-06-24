@@ -6,6 +6,7 @@ Colour mixing:
     SOCM_BOEI    — Bayesian Optimization with Expected Improvement (LogEI)
     SOCM_BOLCB   — Bayesian Optimization with Lower Confidence Bound (UCB)
     SOCM_LLM — LLM (single objective: Delta E 2000)
+    SOCM_COHELIOS — local HELIOS-style PlannerAgent/DesignAgent/SafetyAgent chain
     LLMOptimizer     — alias for SOCM_LLM
 
 Viscosity — single-objective (SOVH), box-bounded parameters:
@@ -60,7 +61,7 @@ except ImportError:
 @dataclass
 class SuggestionResult:
     volumes: list[float]
-    optimizer: Literal["BO", "LLM"]
+    optimizer: Literal["BO", "LLM", "CO_HELIOS"]
     llm_reasoning: str | None = None
 
 
@@ -745,6 +746,17 @@ class SOCM_LLM:
 
 
 LLMOptimizer = SOCM_LLM
+
+
+try:
+    from scripts.co_helios.co_helios_optimizer import CoHeliosOptimizer as SOCM_COHELIOS
+except ModuleNotFoundError:
+    try:
+        from ..co_helios.co_helios_optimizer import CoHeliosOptimizer as SOCM_COHELIOS
+    except (ImportError, ModuleNotFoundError):
+        SOCM_COHELIOS = None  # type: ignore[assignment]
+
+COHeliosOptimizer = SOCM_COHELIOS
 
 
 # ---------------------------------------------------------------------------

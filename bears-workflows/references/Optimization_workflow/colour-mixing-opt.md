@@ -36,8 +36,10 @@ Ask the user which approach to use if not specified:
 |---|---|
 | **Bayesian Optimization (BO)** | Efficient for continuous four-component `(R, G, B, water)` volume ratios; fewer iterations to converge |
 | **LLM** | Flexible reasoning; good when constraints or colour theory context matters, but suggestions must still include `(R, G, B, water)` |
+| **CO-HELIOS** | Local HELIOS-style PlannerAgent -> DesignAgent -> SafetyAgent optimization chain with auditable decision nodes for every suggestion |
 
 See [optimization.md](optimization.md) for implementation details.
+For CO-HELIOS details, see [../co_helios/co-helios-colour-mixing.md](../co_helios/co-helios-colour-mixing.md).
 
 ---
 
@@ -82,7 +84,7 @@ Collect all of the following before starting. Do not proceed until every value i
 | **Water source — deck slot** | Deck slot for the labware holding **water only** |
 | `x_init` — 3 initial mixes | User-provided volume sets (see below) |
 | `x_init` destination wells | Three user-selected destination wells, one for each `x_init` mix |
-| Optimization approach | BO (EI or LCB) or LLM (choose model) |
+| Optimization approach | BO (EI or LCB), LLM (choose model), or CO-HELIOS |
 | Maximum iterations | Stop after this many iterations; default and maximum allowed value is 12 |
 
 **Critical — RGB dye labware and water source use separate deck positions**
@@ -243,6 +245,7 @@ For the 3 initial mixes this produces `DeltaE_1`, `DeltaE_2`, `DeltaE_3`.
 Pass all `(volume_ratios, Delta E 2000)` pairs (one per active well) to the chosen optimizer:
 - **BO**: seed the surrogate model with all 3 initial `(ratio, Delta E 2000)` observations
 - **LLM**: provide the full list of `(ratios, RGB, Delta E 2000)` for all 3 initial mixes and request the next suggestion. Capture the model's reasoning separately from the strict numeric suggestion so it can be recorded in the report.
+- **CO-HELIOS**: provide the full list of `(ratios, RGB, Delta E 2000)` observations through `CoHeliosOptimizer.observe(...)`. Confirm the returned suggestion has `optimizer == "CO_HELIOS"` and `metadata["agent_chain"] == ["PlannerAgent", "DesignAgent", "SafetyAgent"]` before protocol generation.
 
 **Step 9 — New volume ratio suggestion**
 The optimizer returns the next `(R_vol, G_vol, B_vol, water_vol)` to try.
@@ -305,6 +308,14 @@ Example `x_init` log block:
 | Target colour RGB | (<R_target>, <G_target>, <B_target>) |
 | Next suggested ratio (R, G, B, water) | (<R_next> µL, <G_next> µL, <B_next> µL, <water_next> µL) |
 | LLM reasoning | <include only when LLM optimizer was used: concise reasoning behind the suggested ratio> |
+| Optimizer | <include when CO-HELIOS was used: `suggestion.optimizer`> |
+| Planner phase | <include when CO-HELIOS was used: `suggestion.metadata["plan"]["phase"]`> |
+| Planner strategy | <include when CO-HELIOS was used: `suggestion.metadata["plan"]["strategy"]`> |
+| Planner resource estimate | <include when CO-HELIOS was used: `suggestion.metadata["plan"]["resource_estimate"]`> |
+| Candidate confidence | <include when CO-HELIOS was used: `suggestion.metadata["candidate_confidence"]`> |
+| Safety score | <include when CO-HELIOS was used: `suggestion.metadata["safety"]["safety_score"]`> |
+| Safety violations | <include when CO-HELIOS was used: `suggestion.metadata["safety"]["violations"]`> |
+| Agent decision trace | <include when CO-HELIOS was used: `planner_decisions`, `design_decisions`, and `safety_decisions`> |
 | Stop condition reached | Yes / No |
 
 ### Wells processed this iteration
@@ -317,6 +328,8 @@ Example `x_init` log block:
 The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first BO/LLM-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
 
 When the LLM optimizer is used, every optimization iteration block must include the `LLM reasoning` row explaining why the suggested `(R, G, B, water)` ratio was chosen. When BO is used, omit the `LLM reasoning` row from the iteration block. Keep LLM reasoning as a concise report note, and keep the validated numeric JSON suggestion separate from that reasoning before protocol generation.
+
+When CO-HELIOS is used, every optimization iteration block must include the CO-HELIOS metadata rows shown above. The helper `scripts.co_helios.reporting.co_helios_report_markdown_rows(suggestion)` returns these rows in the correct markdown table format.
 
 **Step 11 — Generate and execute protocol**
 Use **puda-protocol** to generate a new protocol with the suggested volumes and execute it on the Opentrons.
@@ -367,6 +380,7 @@ On stop: generate a final summary report using the markdown structure defined in
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
 - `OPENROUTER_BASE_URL` must also be set in the local `.env` file before running any LLM optimizer. If it is not found, stop and instruct the user to add it and do not proceed until the variable is confirmed set.
 - When using the LLM optimizer, record the LLM reasoning for each suggested `(R, G, B, water)` ratio inside that iteration's report block, while still accepting only the validated numeric suggestion for protocol generation. When using BO, omit the `LLM reasoning` row.
+- When using the CO-HELIOS optimizer, record optimizer, planner, candidate-confidence, safety, and agent-decision metadata in every optimization iteration block. If `suggestion.metadata["agent_chain"]` is absent or does not contain `PlannerAgent`, `DesignAgent`, and `SafetyAgent`, stop and treat the run as not using CO-HELIOS.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
 - Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`

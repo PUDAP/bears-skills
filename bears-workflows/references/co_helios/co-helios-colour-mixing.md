@@ -11,6 +11,9 @@ It keeps the current Bears workflow responsible for Opentrons protocol generatio
 ## Local Layout
 
 - `../../scripts/co_helios/co_helios_optimizer.py` - optimizer agent chain and public optimizer class.
+- `../../scripts/co_helios/base.py` - local HELIOS-compatible `BaseAgent`, `AgentResult`, and `DecisionNode` primitives.
+- `../../scripts/co_helios/domain_knowledge.py` - colour-mixing domain rules used by planner, design, and safety agents.
+- `../../scripts/co_helios/reporting.py` - helper for appending mandatory CO-HELIOS report rows.
 - `../../scripts/co_helios/workflow.py` - convenience imports for existing image-processing and metric helpers.
 - `../../scripts/optimization_workflow/build_colour_mixing_protocol.py` - Opentrons protocol generation.
 - `../../scripts/optimization_workflow/image_processing.py` - plate image correction and well RGB extraction.
@@ -25,6 +28,8 @@ CO-HELIOS uses the same public optimizer shape as the existing colour-mixing opt
 3. Use only `suggestion.volumes` for protocol generation.
 4. Store `suggestion.metadata` in the report if agent decision traceability is needed.
 
+The agents follow the HELIOS pattern from `https://github.com/SissiFeng/HELIOS/tree/main`: they inherit from `BaseAgent`, emit `DecisionNode` dictionaries, and use domain knowledge instead of hard-coded report-only labels. This local adapter does not require the full HELIOS web service to be running.
+
 The optimizer output includes:
 
 | Field | Meaning |
@@ -32,6 +37,9 @@ The optimizer output includes:
 | `volumes` | Four validated microliter volumes in `[R, G, B, water]` order |
 | `optimizer` | `"CO_HELIOS"` |
 | `llm_reasoning` | Short local rationale for the report; no protocol logic should depend on it |
+| `metadata.agent_chain` | Explicit `["PlannerAgent", "DesignAgent", "SafetyAgent"]` trace marker |
+| `metadata.domain_knowledge` | Colour-mixing safety policy from `domain_knowledge.py` |
+| `metadata.agent_runs` | Per-agent success state, trace id, duration, and decision tree |
 | `metadata.plan` | Planner phase, strategy, resource estimate, and notes |
 | `metadata.planner_decisions` | Budget and strategy decision nodes |
 | `metadata.design_decisions` | Candidate generation confidence decision nodes |
