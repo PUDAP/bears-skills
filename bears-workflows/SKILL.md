@@ -25,7 +25,7 @@ Capabilities:
 - Camera capture of mixed colour after each dispensing step
 - VLM-based image processing and ROI extraction for per-well RGB measurement
 - Delta E 2000 calculation between mixed and target colour
-- Bayesian Optimization (BO) or LLM-driven suggestion of next four-component `(R, G, B, water)` volume ratios
+- Bayesian Optimization (BO), LLM-driven, or CO-HELIOS suggestion of next four-component `(R, G, B, water)` volume ratios
 - Iterative protocol generation and execution until maximum iterations is reached
 - Per-iteration report generation (volumes, RGB, Delta E 2000, next suggestion)
 
@@ -45,6 +45,8 @@ Before running:
 - See optimization details: [optimization.md](references/Optimization_workflow/optimization.md)
 - See image processing details: [image-processing.md](references/Optimization_workflow/image-processing.md)
 - Optimizer classes: [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
+- CO-HELIOS optimizer adapter: [scripts/co_helios/co_helios_optimizer.py](scripts/co_helios/co_helios_optimizer.py)
+- CO-HELIOS reference: [references/co_helios/co-helios-colour-mixing.md](references/co_helios/co-helios-colour-mixing.md)
 - Metrics utility: [scripts/optimization_workflow/metric.py](scripts/optimization_workflow/metric.py)
 - Image processing pipeline: [scripts/optimization_workflow/image_processing.py](scripts/optimization_workflow/image_processing.py)
 
