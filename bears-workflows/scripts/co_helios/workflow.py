@@ -26,11 +26,17 @@ except ModuleNotFoundError:
     )
 
 from scripts.co_helios.co_helios_optimizer import CoHeliosOptimizer
+from scripts.co_helios.reporting import (
+    co_helios_report_markdown_rows,
+    co_helios_report_rows,
+)
 
 __all__ = [
     "CoHeliosOptimizer",
     "DEFAULT_CONFIG",
     "calculate_delta_e_2000",
+    "co_helios_report_markdown_rows",
+    "co_helios_report_rows",
     "run_pipeline",
     "stop_condition_reached",
     "validate_rgby_volumes",

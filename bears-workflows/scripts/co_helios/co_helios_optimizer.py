@@ -16,27 +16,12 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-
-@dataclass(frozen=True)
-class AgentDecision:
-    """Audit record for one agent decision point."""
-
-    id: str
-    label: str
-    options: list[str]
-    selected: str
-    reason: str
-    outcome: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "options": list(self.options),
-            "selected": self.selected,
-            "reason": self.reason,
-            "outcome": self.outcome,
-        }
+try:
+    from scripts.co_helios.base import AgentResult, BaseAgent, DecisionNode
+    from scripts.co_helios.domain_knowledge import ColourMixingDomainKnowledge
+except ModuleNotFoundError:
+    from .base import AgentResult, BaseAgent, DecisionNode
+    from .domain_knowledge import ColourMixingDomainKnowledge
 
 
 @dataclass(frozen=True)
@@ -60,6 +45,32 @@ class RoundPlan:
     resource_estimate: dict[str, Any]
     notes: str
     decision_nodes: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class PlannerInput:
+    completed_rounds: int
+    n_observations: int
+
+
+@dataclass(frozen=True)
+class DesignInput:
+    plan: RoundPlan
+    history: list[dict[str, Any]]
+    target_colour: tuple[int, int, int] | None = None
+
+
+@dataclass(frozen=True)
+class DesignOutput:
+    candidates: list[list[float]]
+    candidate_confidence: list[dict[str, Any]]
+    decision_nodes: list[dict[str, Any]]
+    strategy_used: str
+
+
+@dataclass(frozen=True)
+class SafetyInput:
+    volumes: list[float]
 
 
 @dataclass(frozen=True)
@@ -90,25 +101,49 @@ class CandidateConfidence:
         }
 
 
-class PlannerAgent:
+class PlannerAgent(BaseAgent[PlannerInput, RoundPlan]):
     """Round planner for colour-mixing optimization."""
 
-    def __init__(self, *, max_rounds: int = 12, batch_size: int = 8) -> None:
+    name = "planner_agent"
+    description = "CO-HELIOS colour-mixing round planner"
+    layer = "L2"
+
+    def __init__(
+        self,
+        *,
+        max_rounds: int = 12,
+        batch_size: int = 8,
+        domain_knowledge: ColourMixingDomainKnowledge | None = None,
+    ) -> None:
         if max_rounds < 1:
             raise ValueError("max_rounds must be >= 1")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
         self.max_rounds = max_rounds
         self.batch_size = batch_size
+        self.domain_knowledge = domain_knowledge or ColourMixingDomainKnowledge()
+
+    def validate_input(self, input_data: PlannerInput) -> list[str]:
+        errors = []
+        if input_data.completed_rounds < 0:
+            errors.append("completed_rounds must be >= 0")
+        if input_data.n_observations < 0:
+            errors.append("n_observations must be >= 0")
+        return errors
+
+    def process(self, input_data: PlannerInput) -> RoundPlan:
+        return self.plan(
+            completed_rounds=input_data.completed_rounds,
+            n_observations=input_data.n_observations,
+        )
 
     def plan(self, *, completed_rounds: int, n_observations: int) -> RoundPlan:
         """Choose an exploration/exploitation/refinement strategy."""
 
         round_number = completed_rounds + 1
-        progress = round_number / max(self.max_rounds, 1)
         remaining_rounds = max(self.max_rounds - completed_rounds, 0)
 
-        budget_decision = AgentDecision(
+        budget_decision = DecisionNode(
             id="budget_check",
             label="Budget check",
             options=["stop", "proceed"],
@@ -117,20 +152,14 @@ class PlannerAgent:
             outcome=f"{remaining_rounds} round(s) remaining",
         )
 
-        if n_observations < 3 or progress <= 0.2:
-            phase = "exploration"
-            strategy = "space_filling"
-            notes = "Use simplex-wide candidates because history is sparse."
-        elif progress <= 0.8:
-            phase = "exploitation"
-            strategy = "best_guided"
-            notes = "Sample around the best observed Delta E 2000 result."
-        else:
-            phase = "refinement"
-            strategy = "local_refinement"
-            notes = "Use small moves near the current best mix."
+        phase, strategy, notes = self.domain_knowledge.planner_strategy(
+            completed_rounds=completed_rounds,
+            n_observations=n_observations,
+            max_rounds=self.max_rounds,
+        )
 
-        strategy_decision = AgentDecision(
+        progress = round_number / max(self.max_rounds, 1)
+        strategy_decision = DecisionNode(
             id=f"round_{round_number}_strategy",
             label=f"Round {round_number} strategy",
             options=["space_filling", "best_guided", "local_refinement"],
@@ -147,28 +176,54 @@ class PlannerAgent:
             phase=phase,
             strategy=strategy,
             batch_size=self.batch_size,
-            resource_estimate={
-                "tips_needed": self.batch_size * 4,
-                "instruments": ["ot2", "camera"],
-                "estimated_duration_minutes": self.batch_size * 5,
-            },
+            resource_estimate=self.domain_knowledge.resource_estimate(batch_size=self.batch_size),
             notes=notes,
             decision_nodes=[budget_decision.to_dict(), strategy_decision.to_dict()],
         )
 
 
-class DesignAgent:
+class DesignAgent(BaseAgent[DesignInput, DesignOutput]):
     """Generate candidate RGBy mixes from history and a round plan."""
 
+    name = "design_agent"
+    description = "CO-HELIOS RGBy candidate designer"
+    layer = "L2"
     LOW_CONFIDENCE_THRESHOLD = 0.3
 
-    def __init__(self, *, total_volume: float, seed: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        total_volume: float,
+        seed: int | None = None,
+        domain_knowledge: ColourMixingDomainKnowledge | None = None,
+    ) -> None:
         if total_volume <= 0:
             raise ValueError("total_volume must be positive")
         self.total_volume = float(total_volume)
+        self.domain_knowledge = domain_knowledge or ColourMixingDomainKnowledge(
+            total_volume=self.total_volume
+        )
         self._rng = random.Random(seed)
         self.last_confidence: list[CandidateConfidence] = []
         self.last_decision_nodes: list[dict[str, Any]] = []
+
+    def validate_input(self, input_data: DesignInput) -> list[str]:
+        if input_data.plan.batch_size < 1:
+            return ["plan.batch_size must be >= 1"]
+        return []
+
+    def process(self, input_data: DesignInput) -> DesignOutput:
+        candidates = self.propose(
+            plan=input_data.plan,
+            history=input_data.history,
+            target_colour=input_data.target_colour,
+        )
+        return DesignOutput(
+            candidates=candidates,
+            candidate_confidence=[item.to_dict() for item in self.last_confidence],
+            decision_nodes=self.last_decision_nodes,
+            strategy_used=input_data.plan.strategy,
+        )
 
     def propose(
         self,
@@ -211,7 +266,7 @@ class DesignAgent:
             else "usable_confidence"
         )
         self.last_decision_nodes = [
-            AgentDecision(
+            DecisionNode(
                 id="candidate_confidence",
                 label="Candidate confidence",
                 options=["all_low_confidence", "usable_confidence"],
@@ -279,9 +334,12 @@ class DesignAgent:
         return [v / total * self.total_volume for v in clipped]
 
 
-class SafetyAgent:
+class SafetyAgent(BaseAgent[SafetyInput, CandidateSafetyReport]):
     """Safety gate for colour-mixing optimizer candidates."""
 
+    name = "safety_agent"
+    description = "CO-HELIOS fine-grained RGBy safety gate"
+    layer = "cross-cutting"
     MARGINAL_THRESHOLD = 0.8
     VETO_THRESHOLD = 0.5
 
@@ -291,10 +349,24 @@ class SafetyAgent:
         total_volume: float,
         tolerance_ul: float = 1.0,
         max_component_fraction: float = 1.0,
+        domain_knowledge: ColourMixingDomainKnowledge | None = None,
     ) -> None:
         self.total_volume = float(total_volume)
-        self.tolerance_ul = float(tolerance_ul)
-        self.max_component_fraction = float(max_component_fraction)
+        self.domain_knowledge = domain_knowledge or ColourMixingDomainKnowledge(
+            total_volume=self.total_volume,
+            tolerance_ul=tolerance_ul,
+            max_component_fraction=max_component_fraction,
+        )
+        self.tolerance_ul = float(self.domain_knowledge.tolerance_ul)
+        self.max_component_fraction = float(self.domain_knowledge.max_component_fraction)
+
+    def validate_input(self, input_data: SafetyInput) -> list[str]:
+        if input_data.volumes is None:
+            return ["volumes are required"]
+        return []
+
+    def process(self, input_data: SafetyInput) -> CandidateSafetyReport:
+        return self.check(input_data.volumes)
 
     def check(self, volumes: list[float]) -> CandidateSafetyReport:
         """Validate a candidate before it can be returned to the workflow."""
@@ -341,7 +413,7 @@ class SafetyAgent:
         allowed = not violations and safety_score >= self.VETO_THRESHOLD
         requires_approval = allowed and safety_score < self.MARGINAL_THRESHOLD
 
-        preflight = AgentDecision(
+        preflight = DecisionNode(
             id="preflight_check",
             label="Safety preflight check",
             options=["approved", "denied"],
@@ -349,7 +421,7 @@ class SafetyAgent:
             reason=f"{len(violations)} violation(s) across {n_checks} check(s)",
             outcome="; ".join(violations) if violations else "No violations",
         )
-        escalation = AgentDecision(
+        escalation = DecisionNode(
             id="escalation",
             label="Escalation required?",
             options=["auto_approved", "requires_review", "vetoed"],
@@ -395,13 +467,26 @@ class CoHeliosOptimizer:
     ) -> None:
         self.target_colour = target_colour
         self.total_volume = float(total_volume)
-        self.planner = PlannerAgent(max_rounds=max_rounds, batch_size=batch_size)
-        self.design_agent = DesignAgent(total_volume=total_volume, seed=seed)
-        self.safety_agent = SafetyAgent(total_volume=total_volume)
+        self.domain_knowledge = ColourMixingDomainKnowledge(total_volume=self.total_volume)
+        self.planner = PlannerAgent(
+            max_rounds=max_rounds,
+            batch_size=batch_size,
+            domain_knowledge=self.domain_knowledge,
+        )
+        self.design_agent = DesignAgent(
+            total_volume=total_volume,
+            seed=seed,
+            domain_knowledge=self.domain_knowledge,
+        )
+        self.safety_agent = SafetyAgent(
+            total_volume=total_volume,
+            domain_knowledge=self.domain_knowledge,
+        )
         self._history: list[dict[str, Any]] = []
         self.last_plan: RoundPlan | None = None
         self.last_safety_report: CandidateSafetyReport | None = None
         self.last_candidates: list[list[float]] = []
+        self.last_agent_runs: dict[str, AgentResult[Any]] = {}
 
     def observe(
         self,
@@ -412,7 +497,13 @@ class CoHeliosOptimizer:
         """Record a completed colour-mixing observation."""
 
         normalized = self._normalize_volumes(volumes)
-        report = self.safety_agent.check(normalized)
+        safety_run = self.safety_agent.run(SafetyInput(normalized))
+        if not safety_run.success or safety_run.output is None:
+            raise ValueError(
+                "Observed volumes failed SafetyAgent execution: "
+                + "; ".join(safety_run.errors)
+            )
+        report = safety_run.output
         if not report.allowed:
             raise ValueError(
                 "Observed volumes failed safety validation: "
@@ -430,36 +521,53 @@ class CoHeliosOptimizer:
     def suggest(self) -> CoHeliosSuggestionResult:
         """Return the next safety-approved RGBy candidate."""
 
-        plan = self.planner.plan(
-            completed_rounds=len(self._history),
-            n_observations=len(self._history),
+        planner_run = self.planner.run(
+            PlannerInput(
+                completed_rounds=len(self._history),
+                n_observations=len(self._history),
+            )
         )
-        candidates = self.design_agent.propose(
-            plan=plan,
-            history=self._history,
-            target_colour=self.target_colour,
+        if not planner_run.success or planner_run.output is None:
+            raise ValueError("PlannerAgent failed: " + "; ".join(planner_run.errors))
+        plan = planner_run.output
+
+        design_run = self.design_agent.run(
+            DesignInput(
+                plan=plan,
+                history=self._history,
+                target_colour=self.target_colour,
+            )
         )
+        if not design_run.success or design_run.output is None:
+            raise ValueError("DesignAgent failed: " + "; ".join(design_run.errors))
+        candidates = design_run.output.candidates
         self.last_plan = plan
         self.last_candidates = candidates
+        self.last_agent_runs = {"planner": planner_run, "design": design_run}
 
         ranked = self._rank_candidates(candidates)
         rejected: list[dict[str, Any]] = []
         for candidate in ranked:
             normalized = self._normalize_volumes(candidate)
-            report = self.safety_agent.check(normalized)
+            safety_run = self.safety_agent.run(SafetyInput(normalized))
+            if not safety_run.success or safety_run.output is None:
+                rejected.append({"volumes": candidate, "violations": safety_run.errors})
+                continue
+            report = safety_run.output
             if report.allowed:
                 self.last_safety_report = report
+                self.last_agent_runs["safety"] = safety_run
                 return CoHeliosSuggestionResult(
                     volumes=normalized,
                     llm_reasoning=self._reasoning(plan, normalized, report),
                     metadata={
+                        "agent_chain": ["PlannerAgent", "DesignAgent", "SafetyAgent"],
+                        "domain_knowledge": self.domain_knowledge.safety_policy(),
+                        "agent_runs": self._agent_run_metadata(self.last_agent_runs),
                         "plan": plan.__dict__,
                         "planner_decisions": plan.decision_nodes,
-                        "design_decisions": self.design_agent.last_decision_nodes,
-                        "candidate_confidence": [
-                            item.to_dict()
-                            for item in self.design_agent.last_confidence
-                        ],
+                        "design_decisions": design_run.output.decision_nodes,
+                        "candidate_confidence": design_run.output.candidate_confidence,
                         "safety": report.__dict__,
                         "safety_decisions": report.decision_nodes,
                         "rejected_candidates": rejected,
@@ -506,6 +614,20 @@ class CoHeliosOptimizer:
         if total <= 0:
             raise ValueError("Volume sum must be positive")
         return [v / total * self.total_volume for v in values]
+
+    @staticmethod
+    def _agent_run_metadata(agent_runs: dict[str, AgentResult[Any]]) -> dict[str, Any]:
+        return {
+            name: {
+                "success": run.success,
+                "agent_name": run.agent_name,
+                "trace_id": run.trace_id,
+                "duration_ms": run.duration_ms,
+                "errors": run.errors,
+                "decision_tree": run.decision_tree,
+            }
+            for name, run in agent_runs.items()
+        }
 
     def _reasoning(
         self,

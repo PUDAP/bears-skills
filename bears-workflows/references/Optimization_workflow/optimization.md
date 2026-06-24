@@ -1,6 +1,6 @@
 ---
 name: colour-mixing-optimization-methods
-description: BO and LLM optimization approaches for colour mixing Delta E 2000 minimization and viscosity transfer-error minimization.
+description: BO, LLM, and CO-HELIOS optimization approaches for colour mixing Delta E 2000 minimization and viscosity transfer-error minimization.
 ---
 
 # Optimization Methods
@@ -108,6 +108,44 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 - Full history is included in every prompt — do not truncate
 - Response is validated against the volume sum constraint (±1 µL tolerance) using `R_vol + G_vol + B_vol + water_vol = total_volume`; re-prompted up to `max_retries` times if invalid
 - Log model name, prompt, and response in the iteration report for reproducibility
+
+---
+
+## Colour Mixing - CO-HELIOS Optimization (SOCM)
+
+**Script**: [../../scripts/co_helios/co_helios_optimizer.py](../../scripts/co_helios/co_helios_optimizer.py)  
+**Shared import**: `SOCM_COHELIOS` / `COHeliosOptimizer` from [../../scripts/optimization_workflow/optimizers.py](../../scripts/optimization_workflow/optimizers.py)  
+**Report helper**: `scripts.co_helios.reporting.co_helios_report_markdown_rows`
+
+**Class**: `CoHeliosOptimizer` (aliases: `HELIOSOptimizer`, `SOCM_COHELIOS`, `COHeliosOptimizer`) - local HELIOS-style PlannerAgent -> DesignAgent -> SafetyAgent chain.
+
+Use CO-HELIOS when the user wants explicit agent traceability for the optimization approach. It does not call the full HELIOS service; it implements the HELIOS agent contract locally through `BaseAgent`, `DecisionNode`, and `ColourMixingDomainKnowledge` so the PUDA workflow can run without the HELIOS web app.
+
+**Usage**:
+```python
+from scripts.optimization_workflow.optimizers import COHeliosOptimizer
+
+optimizer = COHeliosOptimizer(
+    target_colour=(180, 60, 40),
+    total_volume=300.0,
+    max_rounds=12,
+    batch_size=8,
+    seed=42,
+)
+
+for volumes, rgb, delta_e_2000 in x_init_results:
+    optimizer.observe(volumes, rgb, delta_e_2000)
+
+suggestion = optimizer.suggest()
+next_volumes = suggestion.volumes
+metadata = suggestion.metadata
+```
+
+**Required report evidence**:
+- `suggestion.optimizer` must be `CO_HELIOS`.
+- `suggestion.metadata["agent_chain"]` must contain `PlannerAgent`, `DesignAgent`, and `SafetyAgent`.
+- Append the CO-HELIOS metadata rows from `co_helios_report_markdown_rows(suggestion)` to every optimization iteration block.
+- Generate protocols only from the validated numeric `suggestion.volumes`, never from rationale text or decision metadata.
 
 ---
 
