@@ -46,6 +46,7 @@ Before running:
 - See image processing details: [image-processing.md](references/Optimization_workflow/image-processing.md)
 - Optimizer classes: [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
 - CO-HELIOS optimizer adapter: [scripts/co_helios/co_helios_optimizer.py](scripts/co_helios/co_helios_optimizer.py)
+- CO-HELIOS local optimization contracts and OptimizationAgent: [scripts/co_helios/optimization.py](scripts/co_helios/optimization.py)
 - CO-HELIOS reference: [references/co_helios/co-helios-colour-mixing.md](references/co_helios/co-helios-colour-mixing.md)
 - Metrics utility: [scripts/optimization_workflow/metric.py](scripts/optimization_workflow/metric.py)
 - Image processing pipeline: [scripts/optimization_workflow/image_processing.py](scripts/optimization_workflow/image_processing.py)

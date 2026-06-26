@@ -113,13 +113,25 @@ next_volumes = optimizer.suggest()  # [R_vol, G_vol, B_vol, water_vol] in µL
 
 ## Colour Mixing - CO-HELIOS Optimization (SOCM)
 
-**Script**: [../../scripts/co_helios/co_helios_optimizer.py](../../scripts/co_helios/co_helios_optimizer.py)  
+**Scripts**:
+- [../../scripts/co_helios/co_helios_optimizer.py](../../scripts/co_helios/co_helios_optimizer.py) - public optimizer and PlannerAgent / DesignAgent / SafetyAgent chain.
+- [../../scripts/co_helios/optimization.py](../../scripts/co_helios/optimization.py) - local HELIOS optimization contracts, OptimizationAgent, and decision policy.
 **Shared import**: `SOCM_COHELIOS` / `COHeliosOptimizer` from [../../scripts/optimization_workflow/optimizers.py](../../scripts/optimization_workflow/optimizers.py)  
 **Report helper**: `scripts.co_helios.reporting.co_helios_report_markdown_rows`
 
-**Class**: `CoHeliosOptimizer` (aliases: `HELIOSOptimizer`, `SOCM_COHELIOS`, `COHeliosOptimizer`) - local HELIOS-style PlannerAgent -> DesignAgent -> SafetyAgent chain.
+**Class**: `CoHeliosOptimizer` (aliases: `HELIOSOptimizer`, `SOCM_COHELIOS`, `COHeliosOptimizer`) - local HELIOS-style PlannerAgent -> DesignAgent -> OptimizationAgent -> SafetyAgent chain.
 
-Use CO-HELIOS when the user wants explicit agent traceability for the optimization approach. It does not call the full HELIOS service; it implements the HELIOS agent contract locally through `BaseAgent`, `DecisionNode`, and `ColourMixingDomainKnowledge` so the PUDA workflow can run without the HELIOS web app.
+Use CO-HELIOS when the user wants explicit agent traceability for the optimization approach. It does not call the full HELIOS service; it implements the HELIOS agent and optimization contracts locally through `BaseAgent`, `DecisionNode`, `ColourMixingDomainKnowledge`, `OptimizationRequest`, `CandidateSuggestion`, and `OptimizationDecisionPolicy` so the PUDA workflow can run without the HELIOS web app.
+
+The local optimization layer mirrors the parts of upstream HELIOS needed by PUDA:
+
+| Upstream HELIOS idea | PUDA local implementation |
+|---|---|
+| `app.agents.optimization_agent.OptimizationAgent` | `scripts.co_helios.optimization.OptimizationAgent` |
+| `app.optimization.schemas` | `OptimizationRequest`, `OptimizationObservation`, `CandidateSuggestion`, `CandidateDecision` |
+| `app.optimization.decision_policy` | `OptimizationDecisionPolicy` hard-gates candidates |
+| Candidate bounds and duplicate checks | Search-dimension bounds, RGBy simplex sum, and history deduplication |
+| Safety hook | Delegates to the local `SafetyAgent` before a candidate can reach protocol generation |
 
 **Usage**:
 ```python
@@ -144,6 +156,8 @@ metadata = suggestion.metadata
 **Required report evidence**:
 - `suggestion.optimizer` must be `CO_HELIOS`.
 - `suggestion.metadata["agent_chain"]` must contain `PlannerAgent`, `DesignAgent`, and `SafetyAgent`.
+- `suggestion.metadata["integration_chain"]` must contain `PlannerAgent`, `DesignAgent`, `OptimizationAgent`, and `SafetyAgent`.
+- `suggestion.metadata["optimization"]` must include the selected strategy, convergence signal, candidate decision, and decision trace.
 - Append the CO-HELIOS metadata rows from `co_helios_report_markdown_rows(suggestion)` to every optimization iteration block.
 - Generate protocols only from the validated numeric `suggestion.volumes`, never from rationale text or decision metadata.
 

@@ -106,7 +106,6 @@ For `manual_rgb`:
 - Validate that the provided target has exactly three numeric values.
 - Validate that every value is between 0 and 255.
 - Use this RGB tuple directly as `(R_target, G_target, B_target)`.
-
 For `measured_target_mix`:
 - Ask for one target mix volume set `(R_vol, G_vol, B_vol, water_vol)` in µL.
 - Validate that the target mix volumes sum to `total_volume` (±1 µL tolerance): `R+G+B+water=total_volume`.

@@ -18,10 +18,12 @@ def co_helios_report_rows(suggestion: Any) -> list[tuple[str, str]]:
 
     metadata = getattr(suggestion, "metadata", {}) or {}
     plan = metadata.get("plan", {}) or {}
+    optimization = metadata.get("optimization", {}) or {}
     safety = metadata.get("safety", {}) or {}
     trace = {
         "planner_decisions": metadata.get("planner_decisions", []),
         "design_decisions": metadata.get("design_decisions", []),
+        "optimization_decisions": metadata.get("optimization_decisions", []),
         "safety_decisions": metadata.get("safety_decisions", []),
     }
     return [
@@ -30,6 +32,9 @@ def co_helios_report_rows(suggestion: Any) -> list[tuple[str, str]]:
         ("Planner strategy", _fmt(plan.get("strategy"))),
         ("Planner resource estimate", _fmt(plan.get("resource_estimate"))),
         ("Candidate confidence", _fmt(metadata.get("candidate_confidence"))),
+        ("Optimization strategy", _fmt(optimization.get("strategy_selected"))),
+        ("Optimization convergence signal", _fmt(optimization.get("convergence_signal"))),
+        ("Optimization decision trace", _fmt(optimization.get("decision_trace"))),
         ("Safety score", _fmt(safety.get("safety_score"))),
         ("Safety violations", _fmt(safety.get("violations"))),
         ("Agent decision trace", _fmt(trace)),
