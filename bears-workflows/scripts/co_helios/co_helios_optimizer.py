@@ -19,9 +19,25 @@ from typing import Any
 try:
     from scripts.co_helios.base import AgentResult, BaseAgent, DecisionNode
     from scripts.co_helios.domain_knowledge import ColourMixingDomainKnowledge
+    from scripts.co_helios.optimization import (
+        OptimizationAgent,
+        OptimizationObservation,
+        OptimizationRequest,
+        SearchDimension,
+        params_to_volumes,
+        volumes_to_params,
+    )
 except ModuleNotFoundError:
     from .base import AgentResult, BaseAgent, DecisionNode
     from .domain_knowledge import ColourMixingDomainKnowledge
+    from .optimization import (
+        OptimizationAgent,
+        OptimizationObservation,
+        OptimizationRequest,
+        SearchDimension,
+        params_to_volumes,
+        volumes_to_params,
+    )
 
 
 @dataclass(frozen=True)
@@ -482,10 +498,16 @@ class CoHeliosOptimizer:
             total_volume=total_volume,
             domain_knowledge=self.domain_knowledge,
         )
+        self.optimization_agent = OptimizationAgent(
+            total_volume=total_volume,
+            tolerance_ul=self.domain_knowledge.tolerance_ul,
+            safety_check=self._policy_safety_check,
+        )
         self._history: list[dict[str, Any]] = []
         self.last_plan: RoundPlan | None = None
         self.last_safety_report: CandidateSafetyReport | None = None
         self.last_candidates: list[list[float]] = []
+        self.last_optimization_output: Any | None = None
         self.last_agent_runs: dict[str, AgentResult[Any]] = {}
 
     def observe(
@@ -545,7 +567,20 @@ class CoHeliosOptimizer:
         self.last_candidates = candidates
         self.last_agent_runs = {"planner": planner_run, "design": design_run}
 
-        ranked = self._rank_candidates(candidates)
+        optimization_output = self.optimization_agent.run(
+            request=self._optimization_request(plan),
+            candidate_volumes=candidates,
+            strategy=design_run.output.strategy_used,
+            confidence=design_run.output.candidate_confidence,
+        )
+        self.last_optimization_output = optimization_output
+        if not optimization_output.decision.accepted:
+            raise ValueError(
+                "OptimizationAgent rejected every CO-HELIOS candidate: "
+                + "; ".join(optimization_output.decision.rejection_reasons)
+            )
+
+        ranked = [params_to_volumes(params) for params in optimization_output.candidates]
         rejected: list[dict[str, Any]] = []
         for candidate in ranked:
             normalized = self._normalize_volumes(candidate)
@@ -562,15 +597,36 @@ class CoHeliosOptimizer:
                     llm_reasoning=self._reasoning(plan, normalized, report),
                     metadata={
                         "agent_chain": ["PlannerAgent", "DesignAgent", "SafetyAgent"],
+                        "integration_chain": [
+                            "PlannerAgent",
+                            "DesignAgent",
+                            "OptimizationAgent",
+                            "SafetyAgent",
+                        ],
                         "domain_knowledge": self.domain_knowledge.safety_policy(),
                         "agent_runs": self._agent_run_metadata(self.last_agent_runs),
                         "plan": plan.__dict__,
                         "planner_decisions": plan.decision_nodes,
                         "design_decisions": design_run.output.decision_nodes,
                         "candidate_confidence": design_run.output.candidate_confidence,
+                        "optimization": {
+                            "strategy_selected": optimization_output.strategy_selected,
+                            "strategy_rationale": optimization_output.strategy_rationale,
+                            "convergence_signal": optimization_output.convergence_signal,
+                            "decision": optimization_output.decision.__dict__,
+                            "decision_trace": list(optimization_output.decision.decision_trace),
+                            "suggestion": optimization_output.suggestion.__dict__,
+                        },
+                        "optimization_decisions": optimization_output.decision_nodes,
                         "safety": report.__dict__,
                         "safety_decisions": report.decision_nodes,
-                        "rejected_candidates": rejected,
+                        "rejected_candidates": [
+                            *[
+                                {"params": item, "stage": "optimization_policy"}
+                                for item in optimization_output.decision.rejected
+                            ],
+                            *rejected,
+                        ],
                     },
                 )
             rejected.append({"volumes": candidate, "violations": report.violations})
@@ -584,6 +640,49 @@ class CoHeliosOptimizer:
     @property
     def history(self) -> list[dict[str, Any]]:
         return list(self._history)
+
+    def _optimization_request(self, plan: RoundPlan) -> OptimizationRequest:
+        dimensions = tuple(
+            SearchDimension(
+                param_name=str(dim["param_name"]),
+                min_value=float(dim["min_value"]),
+                max_value=float(dim["max_value"]),
+                primitive=str(dim.get("primitive", "robot.aspirate_dispense")),
+            )
+            for dim in self.domain_knowledge.dimensions
+        )
+        observations = tuple(
+            OptimizationObservation(
+                params=volumes_to_params(row["volumes"]),
+                objective_value=float(row["delta_e_2000"]),
+                metadata={
+                    "iteration": row["iteration"],
+                    "rgb": row["rgb"],
+                },
+            )
+            for row in self._history
+        )
+        return OptimizationRequest(
+            campaign_id="puda-colour-mixing",
+            dimensions=dimensions,
+            observations=observations,
+            objective_name="delta_e_2000",
+            direction="minimize",
+            n=1,
+            round_index=plan.round_number,
+            context={
+                "target_colour": self.target_colour,
+                "total_volume": self.total_volume,
+                "plan": plan.__dict__,
+            },
+        )
+
+    def _policy_safety_check(self, volumes: list[float]) -> tuple[bool, list[str], float]:
+        safety_run = self.safety_agent.run(SafetyInput(volumes))
+        if not safety_run.success or safety_run.output is None:
+            return False, list(safety_run.errors), 0.0
+        report = safety_run.output
+        return report.allowed, list(report.violations), float(report.safety_score)
 
     def _rank_candidates(self, candidates: list[list[float]]) -> list[list[float]]:
         if not self._history:
