@@ -25,15 +25,22 @@ except ModuleNotFoundError:
         validate_rgby_volumes,
     )
 
-from scripts.co_helios.co_helios_optimizer import CoHeliosOptimizer
-from scripts.co_helios.reporting import (
-    co_helios_report_markdown_rows,
-    co_helios_report_rows,
-)
+try:
+    from scripts.co_helios.co_helios_optimizer import CoHeliosOptimizer
+    from scripts.co_helios.optimization import OptimizationAgent
+    from scripts.co_helios.reporting import (
+        co_helios_report_markdown_rows,
+        co_helios_report_rows,
+    )
+except ModuleNotFoundError:
+    from .co_helios_optimizer import CoHeliosOptimizer
+    from .optimization import OptimizationAgent
+    from .reporting import co_helios_report_markdown_rows, co_helios_report_rows
 
 __all__ = [
     "CoHeliosOptimizer",
     "DEFAULT_CONFIG",
+    "OptimizationAgent",
     "calculate_delta_e_2000",
     "co_helios_report_markdown_rows",
     "co_helios_report_rows",

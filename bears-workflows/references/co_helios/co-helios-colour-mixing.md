@@ -11,6 +11,7 @@ It keeps the current Bears workflow responsible for Opentrons protocol generatio
 ## Local Layout
 
 - `../../scripts/co_helios/co_helios_optimizer.py` - optimizer agent chain and public optimizer class.
+- `../../scripts/co_helios/optimization.py` - local HELIOS optimization contracts, `OptimizationAgent`, and candidate decision policy.
 - `../../scripts/co_helios/base.py` - local HELIOS-compatible `BaseAgent`, `AgentResult`, and `DecisionNode` primitives.
 - `../../scripts/co_helios/domain_knowledge.py` - colour-mixing domain rules used by planner, design, and safety agents.
 - `../../scripts/co_helios/reporting.py` - helper for appending mandatory CO-HELIOS report rows.
@@ -37,13 +38,16 @@ The optimizer output includes:
 | `volumes` | Four validated microliter volumes in `[R, G, B, water]` order |
 | `optimizer` | `"CO_HELIOS"` |
 | `llm_reasoning` | Short local rationale for the report; no protocol logic should depend on it |
-| `metadata.agent_chain` | Explicit `["PlannerAgent", "DesignAgent", "SafetyAgent"]` trace marker |
+| `metadata.agent_chain` | Explicit `["PlannerAgent", "DesignAgent", "SafetyAgent"]` trace marker for the core agent chain |
+| `metadata.integration_chain` | Explicit `["PlannerAgent", "DesignAgent", "OptimizationAgent", "SafetyAgent"]` trace marker for the full PUDA integration |
 | `metadata.domain_knowledge` | Colour-mixing safety policy from `domain_knowledge.py` |
 | `metadata.agent_runs` | Per-agent success state, trace id, duration, and decision tree |
 | `metadata.plan` | Planner phase, strategy, resource estimate, and notes |
 | `metadata.planner_decisions` | Budget and strategy decision nodes |
 | `metadata.design_decisions` | Candidate generation confidence decision nodes |
 | `metadata.candidate_confidence` | Per-candidate confidence summaries |
+| `metadata.optimization` | OptimizationAgent strategy, convergence signal, decision, and candidate suggestion contract |
+| `metadata.optimization_decisions` | OptimizationAgent candidate-selection decision nodes |
 | `metadata.safety` | Safety decision report |
 | `metadata.safety_decisions` | Safety preflight and escalation decision nodes |
 | `metadata.rejected_candidates` | Candidates rejected before the approved suggestion |
@@ -120,6 +124,21 @@ Safety thresholds:
 For the current colour-mixing adapter, any explicit violation vetoes the candidate.
 The safety gate uses fine granularity, meaning every candidate is checked independently.
 
+## OptimizationAgent and Decision Policy
+
+`OptimizationAgent` is the local PUDA version of the upstream HELIOS optimization agent and `app/optimization` decision layer.
+It consumes the candidate batch from `DesignAgent`, converts each `[R, G, B, water]` vector into named HELIOS-style parameters, ranks candidates against the best historical Delta E 2000 observation, and applies a hard decision policy before the final `SafetyAgent` handoff.
+
+Hard gates:
+
+- Candidate must contain exactly `red`, `green`, `blue`, and `water`.
+- Every parameter must be numeric, finite, and inside the search-space bounds.
+- The four parameters must sum to `total_volume` within tolerance.
+- Candidates already present in history are rejected as duplicates.
+- A delegated `SafetyAgent` check must approve the candidate.
+
+The optimizer records the selected strategy, convergence signal, decision trace, rejected candidates, and selected candidate in `suggestion.metadata["optimization"]`.
+
 ## Usage
 
 ```python
@@ -156,6 +175,7 @@ The rest of the Bears colour-mixing workflow remains unchanged:
 6. Validate `suggestion.volumes` again with `validate_rgby_volumes(...)`.
 7. Generate the Opentrons protocol with `build_colour_mixing_protocol(...)`.
 8. Append planner, design, confidence, and safety metadata to the report.
+9. Include optimization decision metadata from `suggestion.metadata["optimization"]`.
 
 ## Required Validation Before Protocol Generation
 
@@ -176,6 +196,9 @@ When CO-HELIOS is used, include these rows in each iteration block:
 | Planner strategy | `suggestion.metadata["plan"]["strategy"]` |
 | Planner resource estimate | `suggestion.metadata["plan"]["resource_estimate"]` |
 | Candidate confidence | `suggestion.metadata["candidate_confidence"]` |
+| Optimization strategy | `suggestion.metadata["optimization"]["strategy_selected"]` |
+| Optimization convergence signal | `suggestion.metadata["optimization"]["convergence_signal"]` |
+| Optimization decision trace | `suggestion.metadata["optimization"]["decision_trace"]` |
 | Safety score | `suggestion.metadata["safety"]["safety_score"]` |
 | Safety violations | `suggestion.metadata["safety"]["violations"]` |
 | Agent decision trace | `planner_decisions`, `design_decisions`, and `safety_decisions` |
