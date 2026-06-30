@@ -16,6 +16,27 @@ Do **not** assume.
 
 ## Experiment Capabilities and When to Use
 
+### Example P Shape (`example`)
+
+Use for **creating a P-shaped liquid pattern on an Opentrons OT-2 destination plate**.
+
+Capabilities:
+- Generates an OT-2 Python protocol that dispenses into a fixed set of wells shaped like the letter `P`
+- Uses explicit `pipette.aspirate(...)` and `pipette.dispense(...)` calls for each destination well
+- Supports configurable source labware, destination labware, tip rack, pipette, deck slots, source well, and dispense volume
+- Ends with `pipette.drop_tip()` so no tip remains attached
+
+Use this experiment when:
+- The user wants an example Opentrons workflow
+- The task mentions making a `P` shape, letter pattern, or well-plate pattern using aspirate and dispense
+- The workflow should demonstrate direct Opentrons liquid handling rather than optimization
+
+Before running:
+- Refer to: [example P shape](references/example/p-shape.md)
+- Protocol generator: [scripts/example/p_shape.py](scripts/example/p_shape.py)
+- Machine reference: [opentrons-machine](../bears-machines/references/opentrons-machine.md)
+- Ask the user to confirm all deck slots before generating or running the protocol
+
 ### Colour Mixing Optimization (`colour-mixing-opt`)
 
 Use for **iterative RGB colour mixing to match a target colour via Delta E 2000 minimization**.
@@ -165,6 +186,7 @@ When answering experiment-selection questions:
 
 ## Critical Rules
 
+0. For the `example` P-shape workflow, use explicit `pipette.aspirate(...)` and `pipette.dispense(...)` calls only; do not replace them with `transfer()` or `distribute()`.
 1. Always ask for all required inputs (target colour, maximum iterations limit, deck layout) **before** starting any experiment.
 2. Ask the user for the **OT-2 robot IP address** before running, and set it as `ROBOT_IP` in `.env`.
 3. Never ask the user to paste API keys, tokens, passwords, or other secrets into chat. If LLM optimization needs `OPENROUTER_API_KEY`, require it to be configured in the local environment.
