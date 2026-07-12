@@ -225,6 +225,8 @@ next_params = optimizer.suggest()  # {"aspiration_volume": ...}
 - **Volume-only** (`param_bounds = [("volume", min, max)]`): Structured prompt with per-iteration mass, actual volume, signed error, full history, and constant flowrate. Recommended for aspiration-volume tuning.
 - **Multi-parameter**: Generic prompt listing all parameter bounds and a single `absolute_error` metric.
 
+For LLM optimization, the model must return the validated numeric suggestion and a concise report-only `reasoning` field in the same JSON object. Protocol generation uses only the numeric parameter values; the reasoning is logged for review.
+
 **Usage**:
 ```python
 from scripts.optimization_workflow.optimizers import SOVH_LLM, OPENROUTER_MODELS
@@ -247,10 +249,16 @@ optimizer.observe(
 )
 
 next_params = optimizer.suggest()  # {"volume": ...}
+reasoning = optimizer.last_reasoning
+
+# Or get both explicitly in one call:
+next_params, reasoning = optimizer.suggest_with_reasoning()
 ```
 
 **Rules**:
 - Full history is included in every prompt — do not truncate
-- Response is validated against each parameter's `[min, max]` bounds; re-prompted up to `max_retries` times if invalid
+- Response is validated against each parameter's `[min, max]` bounds, and must include non-empty `reasoning`; re-prompted up to `max_retries` times if invalid
+- Required volume-only JSON shape: `{"volume": <number>, "reasoning": "<1-3 concise sentences>"}`
+- For multi-parameter mode, include every numeric parameter key plus `reasoning`
 - Log model name, prompt, and response in the iteration report for reproducibility
 - `OPENROUTER_API_KEY` and `OPENROUTER_BASE_URL` must be set in the local environment before running
