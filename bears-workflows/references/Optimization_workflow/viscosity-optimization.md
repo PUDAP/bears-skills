@@ -100,18 +100,10 @@ Collect all values before starting. Do not generate or execute any protocol unti
 **Critical**
 `mass_balance_vial_30000` and `mass_balance_vial_50000` are custom labware.
 - Their canonical JSON definitions live at `opentrons/driver/src/opentrons_driver/labware/{load_name}.json` (relative to the repo root).
-- When generating a protocol script, **do not embed the definition inline**. Instead, load it from the JSON file at runtime:
-
-```python
-import json as _json
-MASS_BALANCE_VIAL_30000 = _json.loads(
-    (Path(__file__).resolve().parents[2]
-     / "opentrons/driver/src/opentrons_driver/labware/mass_balance_vial_30000.json")
-    .read_text(encoding="utf-8")
-)
-```
-
-- The labware is then passed to `protocol.load_labware_from_definition(MASS_BALANCE_VIAL_30000, slot)`. No separate upload step is needed.
+- The JSON file must include `parameters.loadName`; use that value as the protocol command `labware_type`.
+- Generate the protocol the same way as the `opentrons/` driver: add a normal `load_labware` command with `name`, `labware_type`, and `location`. If `labware_type` is discovered in `opentrons_driver.protocol.BUILTIN_LABWARE`, the local protocol builder automatically generates `protocol.load_labware_from_definition(...)`.
+- Do not hand-write runtime JSON-loading snippets such as `Path(...).read_text(...)` in generated protocols, and do not inline custom handling outside the Opentrons protocol builder.
+- If a custom labware definition is newly added or changed, restart the Opentrons Edge service so it reloads the labware catalogue. Upload to the robot can use `Opentrons.upload_labware(BUILTIN_LABWARE[load_name])` or the JSON path, matching the `opentrons/` driver docs.
 
 If `llm` is selected, required credentials such as `OPENROUTER_API_KEY` must already be configured in the local environment. Never ask the user to paste secrets into chat.
 
@@ -171,7 +163,7 @@ The seed run uses `A1`. Optimization iteration 1 uses `A2`, iteration 2 uses `A3
 
 Generate one Opentrons protocol using the confirmed initial aspiration volume. The protocol must:
 - Load source, destination, and tip rack labware.
-- Include custom source or destination labware JSON if custom labware is used.
+- For custom source or destination labware, use the JSON `parameters.loadName` as `labware_type` in a normal `load_labware` command; let the Opentrons protocol builder generate `load_labware_from_definition(...)`.
 - Begin liquid handling by picking up the next required tip. The balance must already have been tared immediately before this tip pickup.
 - Aspirate `initial_aspiration` from the source well.
 - **Delay `ASPIRATE_DELAY_SECONDS` (default 5 s)** — allows liquid to equilibrate in the pipette tip.
@@ -424,7 +416,7 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 - Always ask for explicit setup confirmation before generating the seed protocol.
 - Always confirm OT-2 IP and balance serial port before generating any protocol.
 - Always load both opentrons and balance machine references before command generation.
-- If custom source or destination labware is used, load its definition from the JSON file at `opentrons/driver/src/opentrons_driver/labware/{load_name}.json` — do not embed it inline.
+- If custom source or destination labware is used, handle it exactly like the `opentrons/` driver: place the JSON definition under `opentrons/driver/src/opentrons_driver/labware/`, use `parameters.loadName` as `labware_type` in a normal `load_labware` command, and let the local protocol builder auto-generate `load_labware_from_definition(...)`.
 - Never add `load_labware` or `load_instrument` to `protocol_steps` if they are auto-injected by the local protocol builder.
 - Balance edge service must be running before connecting.
 - Tare immediately after balance connection/startup and again before every seed or optimization-iteration transfer run. The per-run tare must occur after the fresh-readings gate and immediately before the OT-2 picks up the next tip.
