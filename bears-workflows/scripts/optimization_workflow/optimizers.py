@@ -850,6 +850,7 @@ class SOVH_LLM:
         )
 
         self._history: list[dict[str, Any]] = []
+        self.last_reasoning: str | None = None
 
     def observe(
         self,
@@ -909,7 +910,34 @@ class SOVH_LLM:
             prompt = self._build_prompt(validation_error=validation_error)
             try:
                 raw = self._call_model(prompt)
-                return self._parse_and_validate(raw)
+                params, reasoning = self._parse_validate_and_reasoning(raw)
+                self.last_reasoning = reasoning
+                return params
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                if attempt == self.max_retries:
+                    raise ValueError(
+                        f"LLM returned invalid parameters after {self.max_retries} attempts: {exc}"
+                    ) from exc
+                validation_error = str(exc)
+
+    def suggest_with_reasoning(self) -> tuple[dict[str, float], str]:
+        """
+        Ask the LLM for the next parameter dict plus concise report reasoning.
+
+        Protocol generation should use only the validated numeric parameter
+        fields. The reasoning is retained for reports and human review.
+        """
+        if not self._history:
+            raise RuntimeError("No observations recorded. Call observe() first.")
+
+        validation_error: str | None = None
+        for attempt in range(1, self.max_retries + 1):
+            prompt = self._build_prompt(validation_error=validation_error)
+            try:
+                raw = self._call_model(prompt)
+                params, reasoning = self._parse_validate_and_reasoning(raw)
+                self.last_reasoning = reasoning
+                return params, reasoning
             except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
                 if attempt == self.max_retries:
                     raise ValueError(
@@ -1041,15 +1069,21 @@ class SOVH_LLM:
             f"Signed error (latest): {signed_str} µL",
             "",
             f"Suggest the **next volume** only, within [{lo}, {hi}] µL.",
+            "Include a concise reason for this numeric suggestion in the same JSON object.",
+            "The reasoning is for the report only; the protocol will use only the validated volume field.",
             "Reply with JSON only, no markdown fences or extra text:",
-            '{"volume": <number>}',
+            '{"volume": <number>, "reasoning": "<1-3 concise sentences>"}',
         ]
         if validation_error:
             lines += [
                 "",
                 "## Fix your previous reply",
                 f"The last response was invalid: {validation_error}",
-                f"Reply again with one JSON object only: {{\"volume\": <number>}} with volume in [{lo}, {hi}].",
+                (
+                    "Reply again with one JSON object only: "
+                    f"{{\"volume\": <number>, \"reasoning\": \"<1-3 concise sentences>\"}} "
+                    f"with volume in [{lo}, {hi}]."
+                ),
             ]
         return "\n".join(lines)
 
@@ -1089,15 +1123,21 @@ class SOVH_LLM:
             "",
             "## What to return",
             "Suggest the next parameter values, one per name above, each within its min/max.",
+            "Include a concise reason for this numeric suggestion in the same JSON object.",
+            "The reasoning is for the report only; the protocol will use only the validated parameter fields.",
             "Reply with JSON only, no markdown fences or extra text:",
-            "{" + example_keys + "}",
+            "{" + example_keys + ', "reasoning": "<1-3 concise sentences>"}',
         ]
         if validation_error:
             lines += [
                 "",
                 "## Fix your previous reply",
                 f"The last response was invalid: {validation_error}",
-                "Reply again with one JSON object only; every parameter name must appear with a numeric value in range.",
+                (
+                    "Reply again with one JSON object only; every parameter name "
+                    "must appear with a numeric value in range, and reasoning must "
+                    "be a non-empty string."
+                ),
             ]
         return "\n".join(lines)
 
@@ -1111,6 +1151,24 @@ class SOVH_LLM:
     def _parse_and_validate(self, response: str) -> dict[str, float]:
         text = _extract_first_json_object_text(response)
         data = json.loads(text)
+        return self._validate_parameter_data(data)
+
+    def _parse_validate_and_reasoning(self, response: str) -> tuple[dict[str, float], str]:
+        """
+        Parse one JSON response containing validated parameters and report reasoning.
+
+        Only the numeric parameter fields are used for protocol generation;
+        reasoning is report text and must be non-empty.
+        """
+        text = _extract_first_json_object_text(response)
+        data = json.loads(text)
+        params = self._validate_parameter_data(data)
+        reasoning = str(data.get("reasoning", "")).strip()
+        if not reasoning:
+            raise ValueError("LLM response must include a non-empty reasoning field.")
+        return params, reasoning
+
+    def _validate_parameter_data(self, data: Any) -> dict[str, float]:
         if not isinstance(data, dict):
             raise ValueError("Expected a JSON object mapping parameter names to floats.")
 

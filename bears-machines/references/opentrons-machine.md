@@ -116,7 +116,25 @@ The following rules **must** be strictly followed when generating Opentrons comm
 ### Custom Labware
 
 - `mass_balance_vial_30000` and `mass_balance_vial_50000` are custom labware.
-- These are automatically loaded via `protocol.load_labware_from_definition()` — the definition is embedded inline in the generated protocol code. No separate upload step is needed.
+- Custom labware JSON definitions are discovered from `opentrons/driver/src/opentrons_driver/labware/` at import time, matching the local `opentrons/` driver.
+- Each custom labware JSON file must include `parameters.loadName`. Use that `loadName` value as the `labware_type` in a normal `load_labware` command.
+- Do not generate bespoke JSON-loading code in protocols. Generate the same command shape as standard labware:
+
+```json
+{
+  "machine_id": "opentrons",
+  "name": "load_labware",
+  "params": {
+    "name": "balance_vial",
+    "labware_type": "mass_balance_vial_30000",
+    "location": "3"
+  }
+}
+```
+
+- When `labware_type` is present in `opentrons_driver.protocol.BUILTIN_LABWARE`, the local protocol builder automatically emits `protocol.load_labware_from_definition(...)`; standard Opentrons labware still emits `protocol.load_labware(...)`.
+- To confirm discovery, use the Opentrons driver catalogue (`get_labware_types()` or `Opentrons.get_labware_types()`) and verify the custom `parameters.loadName` appears.
+- If a labware JSON file is newly added or changed, restart the Opentrons Edge service so the catalogue reloads. Upload to the robot can use `Opentrons.upload_labware(BUILTIN_LABWARE[load_name])` or the JSON path, as documented in `opentrons/`.
 
 ### Command Dependencies and Sequencing
 

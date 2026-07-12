@@ -56,7 +56,7 @@ row H   H1      H2         H12     ← bottom-left to bottom-right
 
 ```python
 DEFAULT_CONFIG = ImageConfig(
-    src_corners=[(284, 271), (411, 272), (409, 354), (285, 349)]
+    src_corners=[(207, 220), (310, 221), (309, 287), (208, 288)],
     dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
     plate_width=1800,
     plate_height=1200,

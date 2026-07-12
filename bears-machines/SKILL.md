@@ -88,7 +88,7 @@ Capabilities:
 - Flow control: `flow_rate`, `air_gap`, `blow_out`, `touch_tip`, `move_to`
 - Protocol utilities: `delay`, `comment`, `home`
 - CSV-driven loops: `read_csv_file` + `loop` for data-driven protocols
-- Custom labware support: AMDM mass balance vials (30 mL, 50 mL) loaded inline
+- Custom labware support: AMDM mass balance vials (30 mL, 50 mL) discovered from the Opentrons driver labware catalogue and loaded through normal `load_labware` commands
 - All gen2 pipette types: p10, p20, p300, p1000 (single and multi-channel)
 - **External camera image capture**: `camera_capture` - triggers the external camera mounted above the deck to capture and save a still image of the wellplate
 
