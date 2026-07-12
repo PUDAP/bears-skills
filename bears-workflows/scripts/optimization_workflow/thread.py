@@ -34,6 +34,15 @@ def _sanitize_filename(name: str) -> str:
     return re.sub(r"[^\w\-.]", "_", name)
 
 
+def _viscosity_data_root() -> Path:
+    return Path(
+        os.environ.get(
+            "VISCOSITY_DATA_DIR",
+            os.path.join("reports", "SynologyDrive", "viscosity_optimization"),
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Balance monitor — NATS telemetry via puda machine watch
 # ---------------------------------------------------------------------------
@@ -60,7 +69,8 @@ def monitor_balance_threaded(
         sample_name:  Used to name the output CSV file.
         save_csv:     Write a CSV to *csv_dir* on stop.
         csv_dir:      Output directory.  Defaults to
-                      ``reports/viscosity_raw_data``.
+                      ``$VISCOSITY_DATA_DIR/viscosity_raw_data`` or
+                      ``reports/SynologyDrive/viscosity_optimization/viscosity_raw_data``.
         stop_event:   Set by the protocol monitor when the OT-2 run reaches a
                       terminal state.  Balance monitoring stops immediately.
         max_duration: Hard upper bound in seconds.  ``None`` means no limit.
@@ -106,7 +116,7 @@ def monitor_balance_threaded(
         csv_path = balance_result.get("csv_path")
     """
     if csv_dir is None:
-        csv_dir = os.path.join("reports", "viscosity_raw_data")
+        csv_dir = str(_viscosity_data_root() / "viscosity_raw_data")
     if result_dict is None:
         result_dict = {}
     if stop_event is None:

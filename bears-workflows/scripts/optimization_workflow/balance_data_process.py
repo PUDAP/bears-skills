@@ -9,6 +9,7 @@ summary metrics for the optimizer.
 
 from __future__ import annotations
 
+import os
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,15 @@ IMPORTANT_COMMANDS = {"aspirate", "dispense"}
 DEFAULT_COMMAND_TOLERANCE_SECONDS = 0.5
 DEFAULT_OUTLIER_THRESHOLD_MG = 10000.0
 DEFAULT_PROCESSING_WINDOW_SECONDS = 30.0
+
+
+def _viscosity_data_root() -> Path:
+    return Path(
+        os.environ.get(
+            "VISCOSITY_DATA_DIR",
+            os.path.join("reports", "SynologyDrive", "viscosity_optimization"),
+        )
+    )
 
 
 def _require_pandas() -> bool:
@@ -387,7 +397,7 @@ def analyze_latest_viscosity_experiment(
         return {"success": False, "message": "pandas not installed"}
 
     if csv_file_path is None:
-        raw_data_dir = Path("reports") / "viscosity_raw_data"
+        raw_data_dir = _viscosity_data_root() / "viscosity_raw_data"
         if not raw_data_dir.exists():
             return {
                 "success": False,
@@ -407,7 +417,7 @@ def analyze_latest_viscosity_experiment(
     csv_file_path = Path(csv_file_path)
 
     if base_output_dir is None:
-        processed_dir = Path("reports") / "viscosity_processed_data"
+        processed_dir = _viscosity_data_root() / "viscosity_processed_data"
     else:
         processed_dir = Path(base_output_dir) / "viscosity_processed_data"
 
@@ -460,7 +470,7 @@ def plot_and_save_viscosity_graph(
         return None
 
     if graph_output_dir is None:
-        graph_output_dir = Path("reports") / "viscosity_graphs"
+        graph_output_dir = _viscosity_data_root() / "viscosity_graphs"
     else:
         graph_output_dir = Path(graph_output_dir)
 
@@ -503,10 +513,17 @@ def plot_and_save_viscosity_graph(
 def analyze_balance_data(
     balance_readings: list[dict[str, Any]],
     target_mass: float | None = None,
+    target_volume_uL: float | None = None,
+    density_g_per_mL: float = 1.0,
 ) -> dict[str, Any] | None:
-    """Analyze balance readings and calculate mass-change and error metrics in mg."""
+    """Analyze balance readings and calculate mass and volume error metrics.
+
+    ``density_g_per_mL`` is numerically equivalent to mg/uL, so delivered
+    volume is ``mass_mg / density_g_per_mL``.
+    """
     if not balance_readings or not _require_pandas():
         return None
+    density = _validate_density(density_g_per_mL)
 
     df = pd.DataFrame(balance_readings)
     if df.empty:
@@ -516,13 +533,28 @@ def analyze_balance_data(
     max_weight = float(df["mass_mg"].max())
     min_weight = float(df["mass_mg"].min())
     relative_mass_change = max_weight - min_weight
+    relative_volume_change = calculate_volume_from_mass(relative_mass_change, density)
 
     mass_error = None
     if target_mass is not None and target_mass > 0:
         mass_error = float(target_mass) - relative_mass_change
 
+    signed_error_uL = None
+    absolute_error_uL = None
+    if target_volume_uL is not None and target_volume_uL > 0:
+        signed_error_uL = relative_volume_change - float(target_volume_uL)
+        absolute_error_uL = abs(signed_error_uL)
+
     return {
         "relative_mass_change_mg": relative_mass_change,
+        "relative_volume_change_uL": relative_volume_change,
+        "density_g_per_mL": density,
+        "target_volume_uL": target_volume_uL,
+        "target_volume_ul": target_volume_uL,
+        "signed_error_uL": signed_error_uL,
+        "signed_error_ul": signed_error_uL,
+        "absolute_error_uL": absolute_error_uL,
+        "absolute_error_ul": absolute_error_uL,
         "mass_error_mg": mass_error,
         "max_weight_mg": max_weight,
         "min_weight_mg": min_weight,
@@ -530,10 +562,47 @@ def analyze_balance_data(
     }
 
 
-def calculate_signed_error(actual_mass_change_mg: float, target_mass_mg: float) -> float:
+def _validate_density(density_g_per_mL: float) -> float:
+    density = float(density_g_per_mL)
+    if density <= 0:
+        raise ValueError("density_g_per_mL must be greater than 0.")
+    return density
+
+
+def calculate_volume_from_mass(mass_mg: float, density_g_per_mL: float = 1.0) -> float:
     """
-    Calculate signed error between actual and target mass change (mg).
+    Convert mass change in mg to delivered volume in uL.
+
+    Because 1 g/mL is equal to 1 mg/uL, the conversion is:
+    volume_uL = mass_mg / density_g_per_mL.
+    """
+    return float(mass_mg) / _validate_density(density_g_per_mL)
+
+
+def calculate_signed_volume_error(
+    actual_mass_change_mg: float,
+    target_volume_uL: float,
+    density_g_per_mL: float = 1.0,
+) -> float:
+    """
+    Calculate signed volume error in uL from gravimetric mass change.
 
     Positive means over-transfer; negative means under-transfer.
+    """
+    actual_volume_uL = calculate_volume_from_mass(
+        actual_mass_change_mg,
+        density_g_per_mL,
+    )
+    return actual_volume_uL - float(target_volume_uL)
+
+
+def calculate_signed_error(actual_mass_change_mg: float, target_mass_mg: float) -> float:
+    """
+    Calculate signed error between actual and target mass change in mg.
+
+    Positive means over-transfer; negative means under-transfer.
+
+    For viscosity optimization, prefer ``calculate_signed_volume_error`` so
+    non-water samples use their measured density.
     """
     return float(actual_mass_change_mg) - float(target_mass_mg)

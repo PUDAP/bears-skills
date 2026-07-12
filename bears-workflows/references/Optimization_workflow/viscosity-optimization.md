@@ -82,6 +82,7 @@ Collect all values before starting. Do not generate or execute any protocol unti
 | Sample name | String identifier, e.g. `"glycerol_50pct"` |
 | Initial aspiration volume | Initial `aspiration_volume` in uL used for the seed run |
 | Target volume | Desired dispensed volume in uL |
+| Sample density | Density in g/mL, numerically equal to mg/uL, used to convert balance mass change to delivered volume. Use `1.0` only for water-like samples or when explicitly accepted as an approximation |
 | Optimization approach | `bayes_lcb`, `bayes_eo`, or `llm` |
 | If LLM: OpenRouter model ID | e.g. `"openai/gpt-4o"` |
 | Measurement phase | `"aspirate"` or `"dispense"` phase used for balance processing |
@@ -96,6 +97,15 @@ Collect all values before starting. Do not generate or execute any protocol unti
 | Aspirate delay | Seconds to wait after aspirate (pipette equilibration), default `5.0` |
 | Dispense delay | Seconds to wait after dispense (balance stabilization), default `10.0` |
 | Balance serial port | Linux serial path, e.g. `/dev/ttyUSB0` |
+
+**Data root**
+Save all viscosity optimization artifacts under the SynologyDrive-backed data root:
+
+```text
+reports/SynologyDrive/viscosity_optimization/
+```
+
+Set `VISCOSITY_DATA_DIR` to override this root when the SynologyDrive folder is mounted somewhere else. All raw data, processed data, reports, graphs, workflow configuration, and final report artifacts must be written under this root.
 
 **Critical**
 `mass_balance_vial_30000` and `mass_balance_vial_50000` are custom labware.
@@ -115,6 +125,7 @@ The confirmation summary must include:
 Sample name
 Initial aspiration volume 
 Target volume 
+Sample density
 Optimization approach
 If LLM: OpenRouter model ID 
 Measurement phase 
@@ -232,7 +243,11 @@ ot2_commands     = protocol_result.get("protocol_commands", [])
 During the seed run, collect balance data and OT-2 status concurrently as described in Phase 2. Process the seed data, compute error, record it as the seed observation, and initialize the optimizer with:
 
 ```python
-observe({"aspiration_volume": initial_aspiration}, signed_error_mg, absolute_error_mg=absolute_error)
+optimizer.observe(
+    {"aspiration_volume": initial_aspiration},
+    signed_error_ul=signed_error_uL,
+    absolute_error=absolute_error_uL,
+)
 ```
 
 The seed run is not counted as optimization iteration 1.
@@ -278,14 +293,14 @@ Execution sequence:
 Raw data is saved as:
 
 ```text
-reports/viscosity_raw_data/<sample>_iter<NNN>_<YYYYMMDD_HHMMSS>.csv
+reports/SynologyDrive/viscosity_optimization/viscosity_raw_data/<sample>_iter<NNN>_<YYYYMMDD_HHMMSS>.csv
 ```
 
 **Step 7 - Collect concurrent data**
 
 During the run, two concurrent streams record:
 
-- **Balance readings at ~4 Hz** via `monitor_balance_threaded` (`thread.py`): subscribes to `puda.balance.tlm.pos` using `puda machine watch` and stores only fresh readings. Each row contains `time` (elapsed seconds from thread start), `mass_mg`, and `timestamp`. The thread writes a raw CSV to `reports/viscosity_raw_data/` automatically on stop.
+- **Balance readings at ~4 Hz** via `monitor_balance_threaded` (`thread.py`): subscribes to `puda.balance.tlm.pos` using `puda machine watch` and stores only fresh readings. Each row contains `time` (elapsed seconds from thread start), `mass_mg`, and `timestamp`. The thread writes a raw CSV to `$VISCOSITY_DATA_DIR/viscosity_raw_data/`, or `reports/SynologyDrive/viscosity_optimization/viscosity_raw_data/` if `VISCOSITY_DATA_DIR` is not set.
 - **OT-2 run status at 4 Hz**: record `ot2_command`, `ot2_status`, and protocol command timing in `ot2_commands`.
 
 After `t.join()`, retrieve outputs:
@@ -311,23 +326,26 @@ Processing rules:
 4. Slice from `aspirate` to the last `delay` after aspiration.
 5. Average delay-period data per second.
 6. Normalize `Time` and mass change to start at 0.
-7. Save processed data to:
+7. Convert normalized mass change to delivered volume with `measured_volume_uL = relative_mass_change_mg / density_g_per_mL`.
+8. Save processed data to:
 
 ```text
-reports/viscosity_processed_data/<same filename>.csv
+reports/SynologyDrive/viscosity_optimization/viscosity_processed_data/<same filename>.csv
 ```
 
 **Step 9 - Compute transfer error**
 
-All transfer error calculations use mg throughout. For aqueous-like fluids, `1 mg ≈ 1 µL`.
+Transfer error is calculated in volume units. Convert the gravimetric mass change to delivered volume using the confirmed sample density:
 
 ```text
 measured_mass_mg   = relative_mass_change_mg
-signed_error_mg    = measured_mass_mg - target_mass_mg
-absolute_error_mg  = abs(signed_error_mg)
+measured_volume_uL = measured_mass_mg / density_g_per_mL
+signed_error_uL    = measured_volume_uL - target_volume_uL
+absolute_error_uL  = abs(signed_error_uL)
 ```
 
 Positive signed error means over-transfer. Negative signed error means under-transfer.
+`density_g_per_mL` must be greater than 0. Since `1 g/mL == 1 mg/uL`, water-like samples can use `1.0`; viscous or mixed samples should use their measured or literature density.
 
 **Step 10 - Update optimizer**
 
@@ -336,8 +354,10 @@ Record the completed run:
 ```python
 optimizer.observe(
     {"aspiration_volume": aspiration_volume},
-    signed_error_mg=signed_error_mg,
-    absolute_error_mg=absolute_error_mg,
+    signed_error_ul=signed_error_uL,
+    absolute_error=absolute_error_uL,
+    relative_mass_change_mg=measured_mass_mg,
+    relative_volume_change_uL=measured_volume_uL,
 )
 ```
 
@@ -347,22 +367,24 @@ For `SOVH_EO`, the surrogate fits toward zero signed error. For `SOVH_LCB`, the 
 
 Append one entry after every seed run and optimization iteration.
 
-Bayesian report: `reports/viscosity_report/report_<sample>.csv`
+Bayesian report: `reports/SynologyDrive/viscosity_optimization/viscosity_report/report_<sample>.csv`
 
 ```text
-run_label,timestamp,run_id,approach,aspiration_volume_ul,measured_mass_mg,target_mass_mg,signed_error_mg,abs_error_mg,raw_csv_path,processed_csv_path
+run_label,timestamp,run_id,approach,aspiration_volume_ul,density_g_per_mL,measured_mass_mg,measured_volume_uL,target_volume_uL,signed_error_uL,abs_error_uL,raw_csv_path,processed_csv_path
 ```
 
-LLM report: `reports/viscosity_report/report_<sample>.txt`
+LLM report: `reports/SynologyDrive/viscosity_optimization/viscosity_report/report_<sample>.txt`
 
 ```text
 --- Iteration <N> (<timestamp>) ---
 Run ID             : <run_id>
 Aspiration volume  : <value> uL
+Density            : <value> g/mL
 Measured mass      : <value> mg
-Target mass        : <value> mg
-Signed error       : <value> mg
-Absolute error     : <value> mg
+Measured volume    : <value> uL
+Target volume      : <value> uL
+Signed error       : <value> uL
+Absolute error     : <value> uL
 Raw CSV            : <path>
 Processed CSV      : <path>
 ```
@@ -385,7 +407,7 @@ On stop:
 - Call `driver.shutdown()` to close the balance serial port cleanly.
 - Ensure the OT-2 has no tip attached.
 - Log the best aspiration volume and best absolute error.
-- Save a final summary to `reports/`.
+- Save a final summary under `reports/SynologyDrive/viscosity_optimization/`.
 - Invoke **puda-memory** to update `experiment.md`.
 
 **Step 13 - Generate PUDA report**
@@ -402,12 +424,13 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 
 | Folder | Contents |
 |---|---|
-| `reports/workflows/` | Saved workflow configuration |
-| `reports/viscosity_raw_data/` | Raw CSVs from each run |
-| `reports/viscosity_processed_data/` | Processed normalized CSVs |
-| `reports/viscosity_report/` | Per-sample optimizer reports |
-| `reports/viscosity_graphs/` | Processed data plots |
-| `reports/` | Final PUDA report artifacts |
+| `reports/SynologyDrive/viscosity_optimization/workflows/` | Saved workflow configuration |
+| `reports/SynologyDrive/viscosity_optimization/protocols/` | Generated OT-2 Python protocols |
+| `reports/SynologyDrive/viscosity_optimization/viscosity_raw_data/` | Raw CSVs from each run |
+| `reports/SynologyDrive/viscosity_optimization/viscosity_processed_data/` | Processed normalized CSVs |
+| `reports/SynologyDrive/viscosity_optimization/viscosity_report/` | Per-sample optimizer reports |
+| `reports/SynologyDrive/viscosity_optimization/viscosity_graphs/` | Processed data plots |
+| `reports/SynologyDrive/viscosity_optimization/` | Final PUDA report artifacts |
 
 ---
 
@@ -417,6 +440,7 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 - Always ask for explicit setup confirmation before generating the seed protocol.
 - Always confirm OT-2 IP and balance serial port before generating any protocol.
 - Always load both opentrons and balance machine references before command generation.
+- Save all viscosity optimization data under the SynologyDrive-backed data root. Default root is `reports/SynologyDrive/viscosity_optimization/`; set `VISCOSITY_DATA_DIR` when the SynologyDrive folder is mounted elsewhere.
 - If custom source or destination labware is used, handle it exactly like the `opentrons/` driver: place the JSON definition under `opentrons/driver/src/opentrons_driver/labware/`, use `parameters.loadName` as `labware_type` in a normal `load_labware` command, and let the local protocol builder auto-generate `load_labware_from_definition(...)`.
 - Never add `load_labware` or `load_instrument` to `protocol_steps` if they are auto-injected by the local protocol builder.
 - Balance edge service must be running before connecting.

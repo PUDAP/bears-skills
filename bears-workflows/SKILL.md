@@ -81,7 +81,7 @@ Capabilities:
 - Concurrent gravimetric data collection from the PUDA balance machine (4 Hz) during each run
 - Balance readings converted to `mass_mg` and processed with `scripts/optimization_workflow/balance_data_process.py`
 - Automatic data processing: command merge, outlier removal, phase slicing, normalisation
-- Transfer error calculation (signed and absolute, in µL)
+- Transfer error calculation (signed and absolute, in µL) after density-aware conversion from balance mass change (`volume_uL = mass_mg / density_g_per_mL`)
 - Bayesian Optimization (LCB or EO) or LLM-driven suggestion of next aspiration volume
 - Optimized variable: aspiration volume, tuned so dispensed volume is as close as possible to target volume
 - Per-iteration report generation (aspiration volume, signed error, absolute error)
@@ -100,7 +100,7 @@ Before running:
 - Machine references: [opentrons-machine](../bears-machines/references/opentrons-machine.md), [balance-machine](../bears-machines/references/balance-machine.md)
 - Data processing script: [scripts/optimization_workflow/balance_data_process.py](scripts/optimization_workflow/balance_data_process.py)
 - Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
-- Protocol output: generate OT-2 Python with `Protocol.to_python_code()` and save it under `reports/protocols/`
+- Protocol output: generate OT-2 Python with `Protocol.to_python_code()` and save it under `reports/SynologyDrive/viscosity_optimization/protocols/` unless `VISCOSITY_DATA_DIR` points to another SynologyDrive location
 
 ### YOLO Alignment (`yolo-alignment`)
 
@@ -196,6 +196,7 @@ When answering experiment-selection questions:
 7. **For viscosity optimization, before every `play`: confirm `get_mass()["fresh"] == True` and `age < 5 s`, then tare the balance with `driver.tare(wait=2.0)` immediately before the OT-2 picks up the next tip. If the balance is not streaming fresh readings, abort - do not send `play`.** Start the balance collection thread before `play`; stop and join the thread as soon as the run reaches a terminal state.
 8. If a run completed without balance data (e.g. Opentrons-only seed run), discard that run's result and re-run the protocol from the upload step, ensuring the balance hard gate passes and the collection thread is started before `play`.
 9. For viscosity optimization, use balance readings as `mass_mg`, process data with `scripts/optimization_workflow/balance_data_process.py`, and pick up tips sequentially from `A1`, `A2`, `A3`, `A4`, then row-major through the rack.
+9a. For viscosity optimization, ask for sample density in g/mL and compute transfer error in µL: `measured_volume_uL = relative_mass_change_mg / density_g_per_mL`, `signed_error_uL = measured_volume_uL - target_volume_uL`, and `absolute_error_uL = abs(signed_error_uL)`. Use `density_g_per_mL = 1.0` only for water-like samples or when the user explicitly accepts that approximation.
 10. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 11. Opentrons protocols must always end with no tip attached to any pipette.
 12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.

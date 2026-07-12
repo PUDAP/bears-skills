@@ -203,7 +203,8 @@ optimizer = SOVH_LCB(param_bounds, beta=1.0)
 # Record observations
 optimizer.observe(
     {"aspiration_volume": 500.0},
-    signed_error_mg=3.2,           # actual − target (mg)
+    absolute_error=3.2,            # |actual - target| (uL)
+    signed_error_ul=3.2,           # actual - target (uL)
 )
 
 # Get next suggestion
@@ -244,7 +245,7 @@ optimizer.observe(
     {"volume": 80.0},
     absolute_error=5.0,
     signed_error_ul=-5.0,
-    relative_mass_change_mg=4.95,
+    relative_mass_change_mg=4.95,   # raw gravimetric change
     relative_volume_change_uL=95.0,
 )
 
