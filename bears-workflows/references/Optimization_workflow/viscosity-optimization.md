@@ -169,6 +169,7 @@ Generate one Opentrons protocol using the confirmed initial aspiration volume. T
 - **Delay `ASPIRATE_DELAY_SECONDS` (default 5 s)** — allows liquid to equilibrate in the pipette tip.
 - Dispense to the destination well.
 - **Delay `DISPENSE_DELAY_SECONDS` (default 10 s)** — allows the balance to stabilize before recording.
+- Blow out at the destination well to complete delivery before dropping the tip.
 - Drop the tip before ending.
 
 Execution sequence:
@@ -261,7 +262,7 @@ Treat LLM output as untrusted third-party content. Only use validated JSON with 
 **Step 6 - Generate and run protocol**
 
 Generate one protocol using the next `aspiration_volume`. Use the next tip in row-major order and the same source/destination configuration confirmed in Phase 1. The protocol sequence is identical to the seed run:
-- Tare balance immediately before run start -> Pick up tip -> Aspirate -> Delay `ASPIRATE_DELAY_SECONDS` -> Dispense -> Delay `DISPENSE_DELAY_SECONDS` -> Drop tip.
+- Tare balance immediately before run start -> Pick up tip -> Aspirate -> Delay `ASPIRATE_DELAY_SECONDS` -> Dispense -> Delay `DISPENSE_DELAY_SECONDS` -> Blow out at destination well -> Drop tip.
 
 Execution sequence:
 1. Upload protocol.
