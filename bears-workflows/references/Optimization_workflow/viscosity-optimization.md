@@ -203,7 +203,11 @@ if not m.get("fresh") or m.get("age", 999) >= 5:
 
 ```python
 import threading, time
-from scripts.optimization_workflow.thread import monitor_balance_threaded, monitor_protocol_status_threaded
+from scripts.optimization_workflow.thread import (
+    monitor_balance_threaded,
+    monitor_protocol_status_threaded,
+    join_and_combine_viscosity_monitors,
+)
 
 stop_event = threading.Event()
 balance_result, protocol_result = {}, {}
@@ -225,15 +229,24 @@ pt.start()
 ```
 
 7. Start OT-2 run with `play`.
-8. Wait for both threads to finish:
+8. Wait for both threads to finish and **combine balance + OT-2 data**:
 
 ```python
-pt.join()
-stop_event.set()   # safety in case protocol thread already set it
-bt.join()
-balance_readings = balance_result["balance_readings"]
-csv_path         = balance_result.get("csv_path")
-ot2_commands     = protocol_result.get("protocol_commands", [])
+combined = join_and_combine_viscosity_monitors(
+    balance_thread=bt,
+    protocol_thread=pt,
+    stop_event=stop_event,
+    balance_result=balance_result,
+    protocol_result=protocol_result,
+    balance_start_time=protocol_start_time,
+    protocol_start_time=protocol_start_time,
+    balance_join_timeout=15,
+)
+
+balance_readings = combined["balance_readings"]   # includes ot2_status, ot2_command, command_type
+csv_path         = combined.get("csv_path")
+ot2_commands     = combined.get("protocol_commands", [])
+protocol_status  = combined.get("protocol_status", "")
 ```
 
 10. Proceed only if `run.status == "succeeded"`.
@@ -287,7 +300,7 @@ Execution sequence:
 5. Tare with `driver.tare(wait=2.0)` immediately before starting this iteration run, so the balance is zeroed before the OT-2 picks up the iteration tip.
 6. Start both `monitor_balance_threaded` and `monitor_protocol_status_threaded` threads (same pattern as Step 4 seed run). The protocol thread sets `stop_event` when the run is terminal.
 7. Start OT-2 run with `play`.
-8. `pt.join()` -> `stop_event.set()` -> `bt.join()` to collect results.
+8. Call `join_and_combine_viscosity_monitors(...)` (same pattern as Step 4) so each balance row includes `ot2_status`, `ot2_command`, and `command_type` before analysis.
 9. Proceed only if `protocol_result["protocol_status"] == "succeeded"`.
 
 Raw data is saved as:
@@ -301,13 +314,25 @@ reports/SynologyDrive/viscosity_optimization/viscosity_raw_data/<sample>_iter<NN
 During the run, two concurrent streams record:
 
 - **Balance readings at ~4 Hz** via `monitor_balance_threaded` (`thread.py`): subscribes to `puda.balance.tlm.pos` using `puda machine watch` and stores only fresh readings. Each row contains `time` (elapsed seconds from thread start), `mass_mg`, and `timestamp`. The thread writes a raw CSV to `$VISCOSITY_DATA_DIR/viscosity_raw_data/`, or `reports/SynologyDrive/viscosity_optimization/viscosity_raw_data/` if `VISCOSITY_DATA_DIR` is not set.
-- **OT-2 run status at 4 Hz**: record `ot2_command`, `ot2_status`, and protocol command timing in `ot2_commands`.
+- **OT-2 run status at 4 Hz** via `monitor_protocol_status_threaded`: records `protocol_status`, `status_history`, and protocol command timing in `protocol_commands`.
 
-After `t.join()`, retrieve outputs:
+After `join_and_combine_viscosity_monitors(...)`, each balance row is annotated with:
+
+| Column | Description |
+|---|---|
+| `ot2_status` | OT-2 run status at that reading time (`running`, `succeeded`, etc.) |
+| `ot2_command` | Active OT-2 command at that reading time |
+| `command_type` | Matched command label used for viscosity analysis (`aspirate`, `dispense`, `delay`, …) |
+| `command_volume_uL` | Volume for aspirate/dispense commands |
+| `command_location` | Well/labware location for the matched command |
+| `command_duration_sec` | Delay duration for delay commands |
+
+Retrieve outputs:
 
 ```python
-balance_readings = result["balance_readings"]   # list[dict] in memory
-csv_path         = result.get("csv_path")       # path of the written CSV
+balance_readings = combined["balance_readings"]   # list[dict] in memory, merged with OT-2 data
+csv_path         = combined.get("csv_path")       # path of the combined CSV
+ot2_commands     = combined.get("protocol_commands", [])
 ```
 
 Non-fresh readings (`fresh == False`) are skipped automatically by the thread. If `balance_readings` is empty after the run, treat it as a failed data capture and do not proceed with error computation.
@@ -315,8 +340,8 @@ Non-fresh readings (`fresh == False`) are skipped automatically by the thread. I
 **Step 8 - Process data**
 
 Use [`../../scripts/optimization_workflow/balance_data_process.py`](../../scripts/optimization_workflow/balance_data_process.py):
-- `merge_protocol_commands_with_balance_readings(...)` to label balance rows with protocol commands.
-- `analyze_viscosity_data(...)` to process the raw CSV.
+- `join_and_combine_viscosity_monitors(...)` from `thread.py` (called immediately after the run) to label balance rows with `ot2_status`, `ot2_command`, and `command_type`.
+- `analyze_viscosity_data(...)` to process the combined CSV.
 - `analyze_balance_data(...)` to compute mass/volume summary metrics when working from in-memory readings.
 
 Processing rules:
@@ -446,7 +471,7 @@ Use the confirmed `project_id` and `experiment_id` with **puda-report**:
 - Balance edge service must be running before connecting.
 - Tare immediately after balance connection/startup and again before every seed or optimization-iteration transfer run. The per-run tare must occur after the fresh-readings gate and immediately before the OT-2 picks up the next tip.
 - **Never send `play` unless `get_mass()["fresh"] == True` and `age < 5 s`.** If the balance is not streaming, abort and fix the connection before retrying.
-- Start `monitor_balance_threaded` (from `thread.py`) in a background thread before sending `play`; it streams readings from `puda.balance.tlm.pos` via NATS and stops automatically when `stop_event` is set by the protocol thread.
+- Start `monitor_balance_threaded` and `monitor_protocol_status_threaded` (from `thread.py`) in background threads before sending `play`; call `join_and_combine_viscosity_monitors(...)` after the run so balance CSVs and in-memory readings include OT-2 status and command labels.
 - If `balance_readings` is empty after a run (Opentrons-only capture), discard that run's result and re-run using the next tip, with the hard gate and thread active from the start.
 - Only fresh readings (`fresh == True` in `puda.balance.tlm.pos`) are stored; `monitor_balance_threaded` skips non-fresh messages automatically. All readings are stored and reported in mg (`mass_mg`). The `mass_g` column is no longer written to CSV or in-memory records.
 - Pick up tips sequentially from `A1`, then `A2`, `A3`, `A4`, and continue row-major through the rack.

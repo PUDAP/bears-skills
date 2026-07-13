@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 
 
 IMPORTANT_COMMANDS = {"aspirate", "dispense"}
-DEFAULT_COMMAND_TOLERANCE_SECONDS = 0.5
+DEFAULT_COMMAND_TOLERANCE_SECONDS = 1.5
 DEFAULT_OUTLIER_THRESHOLD_MG = 10000.0
 DEFAULT_PROCESSING_WINDOW_SECONDS = 30.0
 
@@ -81,12 +81,286 @@ def _set_command_row(df: Any, row_idx: int, command: dict[str, Any]) -> None:
     df.at[row_idx, "command_duration_sec"] = command.get("seconds", "")
 
 
+def _set_command_reading(reading: dict[str, Any], command: dict[str, Any]) -> None:
+    reading["command_type"] = command.get("command_type", "")
+    reading["command_volume_uL"] = command.get("volume", "")
+    reading["command_location"] = command.get("location", "")
+    reading["command_duration_sec"] = command.get("seconds", "")
+
+
+def _command_window(
+    command: dict[str, Any],
+    *,
+    time_offset: float,
+    next_command_time: float | None,
+) -> tuple[float, float]:
+    command_type = command.get("command_type", "")
+    start = float(command.get("elapsed_time", 0.0)) + time_offset
+    if command_type == "delay":
+        try:
+            duration = float(command.get("seconds") or 0.0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        end = start + duration if duration > 0 else (next_command_time or start + 1.0)
+    else:
+        end = next_command_time if next_command_time is not None else start + 1.0
+    return start, end
+
+
+def _active_command_at_time(
+    reading_time: float,
+    protocol_commands: list[dict[str, Any]],
+    *,
+    time_offset: float,
+) -> dict[str, Any] | None:
+    sorted_commands = sorted(
+        protocol_commands,
+        key=lambda command: float(command.get("elapsed_time", 0.0)),
+    )
+    active: dict[str, Any] | None = None
+    for idx, command in enumerate(sorted_commands):
+        command_type = command.get("command_type", "")
+        if not command_type:
+            continue
+        next_time = None
+        if idx + 1 < len(sorted_commands):
+            next_time = (
+                float(sorted_commands[idx + 1].get("elapsed_time", 0.0)) + time_offset
+            )
+        start, end = _command_window(
+            command,
+            time_offset=time_offset,
+            next_command_time=next_time,
+        )
+        if start <= reading_time < end:
+            active = command
+    return active
+
+
+def _status_at_time(
+    reading_time: float,
+    status_history: list[dict[str, Any]],
+    *,
+    fallback_status: str = "",
+) -> str:
+    status = fallback_status
+    for snapshot in sorted(
+        status_history,
+        key=lambda item: float(item.get("elapsed_time", 0.0)),
+    ):
+        elapsed = float(snapshot.get("elapsed_time", 0.0))
+        snapshot_status = snapshot.get("status", "")
+        if elapsed <= reading_time and snapshot_status:
+            status = snapshot_status
+    return status
+
+
+def _merge_commands_onto_readings(
+    balance_readings: list[dict[str, Any]],
+    protocol_commands: list[dict[str, Any]],
+    *,
+    balance_start_time: float,
+    protocol_start_time: float,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Label balance readings with matched protocol command metadata."""
+    annotated = [dict(reading) for reading in balance_readings]
+    for reading in annotated:
+        reading.setdefault("command_type", "")
+        reading.setdefault("command_volume_uL", "")
+        reading.setdefault("command_location", "")
+        reading.setdefault("command_duration_sec", "")
+
+    time_offset = float(protocol_start_time) - float(balance_start_time)
+    matched_commands: set[int] = set()
+    sorted_commands = sorted(
+        protocol_commands,
+        key=lambda command: float(command.get("elapsed_time", 0.0)),
+    )
+
+    for command in sorted_commands:
+        command_type = command.get("command_type", "")
+        if not command_type:
+            continue
+
+        command_time = float(command.get("elapsed_time", 0.0)) + time_offset
+
+        if command_type == "delay":
+            try:
+                delay_duration = float(command.get("seconds") or 0.0)
+            except (TypeError, ValueError):
+                delay_duration = 0.0
+
+            delay_start = command_time
+            delay_end = delay_start + delay_duration
+
+            for idx, reading in enumerate(annotated):
+                reading_time = _reading_time(reading)
+                if delay_start <= reading_time <= delay_end:
+                    current_command = reading.get("command_type", "")
+                    if current_command in ("", "delay"):
+                        reading["command_type"] = command_type
+                        reading["command_duration_sec"] = (
+                            delay_duration if delay_duration > 0 else ""
+                        )
+                        matched_commands.add(id(command))
+
+            if id(command) not in matched_commands and annotated:
+                closest_idx = _closest_reading_index(
+                    annotated,
+                    command_time,
+                    tolerance_seconds=DEFAULT_COMMAND_TOLERANCE_SECONDS,
+                )
+                if closest_idx is not None:
+                    current_command = annotated[closest_idx].get("command_type", "")
+                    if current_command in ("", "delay"):
+                        annotated[closest_idx]["command_type"] = command_type
+                        annotated[closest_idx]["command_duration_sec"] = (
+                            delay_duration if delay_duration > 0 else ""
+                        )
+                        matched_commands.add(id(command))
+            continue
+
+        closest_idx = _closest_reading_index(
+            annotated,
+            command_time,
+            tolerance_seconds=DEFAULT_COMMAND_TOLERANCE_SECONDS,
+        )
+
+        if closest_idx is None and command_type in IMPORTANT_COMMANDS and annotated:
+            closest_idx = min(
+                range(len(annotated)),
+                key=lambda idx: abs(_reading_time(annotated[idx]) - command_time),
+            )
+
+        if closest_idx is None:
+            continue
+
+        current_command_type = annotated[closest_idx].get("command_type", "")
+        if current_command_type == "" or (
+            command_type in IMPORTANT_COMMANDS and current_command_type == "delay"
+        ):
+            _set_command_reading(annotated[closest_idx], command)
+            matched_commands.add(id(command))
+
+    return annotated, len(matched_commands), len(protocol_commands)
+
+
+def annotate_balance_readings_with_protocol(
+    balance_readings: list[dict[str, Any]],
+    protocol_commands: list[dict[str, Any]],
+    *,
+    protocol_status: str = "",
+    status_history: list[dict[str, Any]] | None = None,
+    balance_start_time: float,
+    protocol_start_time: float,
+) -> list[dict[str, Any]]:
+    """Combine balance readings with OT-2 status and active command labels."""
+    merged, matched_count, total_commands = _merge_commands_onto_readings(
+        balance_readings,
+        protocol_commands,
+        balance_start_time=balance_start_time,
+        protocol_start_time=protocol_start_time,
+    )
+    time_offset = float(protocol_start_time) - float(balance_start_time)
+    history = status_history or []
+
+    for reading in merged:
+        reading_time = _reading_time(reading)
+        reading["ot2_status"] = _status_at_time(
+            reading_time,
+            history,
+            fallback_status=protocol_status,
+        )
+        active_command = _active_command_at_time(
+            reading_time,
+            protocol_commands,
+            time_offset=time_offset,
+        )
+        reading["ot2_command"] = (
+            active_command.get("command_type", "") if active_command else ""
+        )
+
+    print(
+        "Annotated balance readings with OT-2 status/commands — "
+        f"{matched_count}/{total_commands} command labels matched"
+    )
+    if matched_count < total_commands:
+        print(f"{total_commands - matched_count} commands could not be matched")
+    return merged
+
+
+def combine_balance_and_protocol_results(
+    balance_result: dict[str, Any],
+    protocol_result: dict[str, Any],
+    *,
+    balance_start_time: float | None = None,
+    protocol_start_time: float | None = None,
+    save_csv: bool = True,
+) -> dict[str, Any]:
+    """
+    Merge OT-2 protocol status/commands into balance readings and CSV.
+
+    Updates *balance_result* in place with combined ``balance_readings`` and
+    rewrites ``csv_path`` when present.
+    """
+    balance_readings = balance_result.get("balance_readings", [])
+    protocol_commands = protocol_result.get("protocol_commands", [])
+    protocol_status = protocol_result.get("protocol_status", "")
+    status_history = protocol_result.get("status_history", [])
+
+    if balance_start_time is None:
+        balance_start_time = float(balance_result.get("balance_start_time", 0.0))
+    if protocol_start_time is None:
+        protocol_start_time = float(protocol_result.get("protocol_start_time", 0.0))
+
+    if not balance_readings:
+        print("No balance readings to combine with protocol data.")
+        return {
+            "balance_readings": [],
+            "csv_path": balance_result.get("csv_path"),
+            "protocol_status": protocol_status,
+            "protocol_commands": protocol_commands,
+            "combined": False,
+        }
+
+    combined_readings = annotate_balance_readings_with_protocol(
+        balance_readings,
+        protocol_commands,
+        protocol_status=protocol_status,
+        status_history=status_history,
+        balance_start_time=balance_start_time,
+        protocol_start_time=protocol_start_time,
+    )
+
+    balance_result["balance_readings"] = combined_readings
+    balance_result["combined_with_protocol"] = True
+
+    csv_path = balance_result.get("csv_path")
+    if save_csv and csv_path and _require_pandas():
+        try:
+            pd.DataFrame(combined_readings).to_csv(csv_path, index=False)
+            print(f"Combined balance/protocol CSV saved: {csv_path}")
+        except Exception as exc:
+            print(f"Could not save combined CSV: {exc}")
+
+    return {
+        "balance_readings": combined_readings,
+        "csv_path": csv_path,
+        "protocol_status": protocol_status,
+        "protocol_commands": protocol_commands,
+        "combined": True,
+    }
+
+
 def merge_protocol_commands_with_balance_readings(
     csv_path: str | Path,
     balance_readings: list[dict[str, Any]],
     protocol_commands: list[dict[str, Any]],
     balance_start_time: float,
     protocol_start_time: float,
+    *,
+    protocol_status: str = "",
+    status_history: list[dict[str, Any]] | None = None,
 ):
     """
     Merge protocol commands with balance readings in an existing CSV file.
@@ -95,105 +369,36 @@ def merge_protocol_commands_with_balance_readings(
     every reading within the delay window when possible. Aspirate and dispense
     commands can overwrite delay labels because they are the key commands for
     viscosity analysis.
+
+    Also updates *balance_readings* in place with ``ot2_status`` and
+    ``ot2_command`` columns when protocol status metadata is supplied.
     """
+    balance_result = {
+        "balance_readings": balance_readings,
+        "csv_path": str(csv_path),
+        "balance_start_time": balance_start_time,
+    }
+    protocol_result = {
+        "protocol_commands": protocol_commands,
+        "protocol_status": protocol_status,
+        "status_history": status_history or [],
+        "protocol_start_time": protocol_start_time,
+    }
+    combined = combine_balance_and_protocol_results(
+        balance_result,
+        protocol_result,
+        balance_start_time=balance_start_time,
+        protocol_start_time=protocol_start_time,
+        save_csv=True,
+    )
     if not _require_pandas():
         return None
-
+    if not combined.get("combined"):
+        return None
     try:
-        csv_path = Path(csv_path)
-        df = pd.read_csv(csv_path)
-        df = _ensure_mass_mg_columns(df)
-
-        time_offset = float(protocol_start_time) - float(balance_start_time)
-
-        df["command_type"] = ""
-        df["command_volume_uL"] = ""
-        df["command_location"] = ""
-        df["command_duration_sec"] = ""
-
-        matched_commands: set[int] = set()
-        sorted_commands = sorted(
-            protocol_commands,
-            key=lambda command: float(command.get("elapsed_time", 0.0)),
-        )
-
-        for command in sorted_commands:
-            command_type = command.get("command_type", "")
-            if not command_type:
-                continue
-
-            command_time = float(command.get("elapsed_time", 0.0)) + time_offset
-
-            if command_type == "delay":
-                try:
-                    delay_duration = float(command.get("seconds") or 0.0)
-                except (TypeError, ValueError):
-                    delay_duration = 0.0
-
-                delay_start = command_time
-                delay_end = delay_start + delay_duration
-
-                for idx, reading in enumerate(balance_readings):
-                    if idx >= len(df):
-                        break
-                    reading_time = _reading_time(reading)
-                    if delay_start <= reading_time <= delay_end:
-                        current_command = df.at[idx, "command_type"]
-                        if current_command in ("", "delay"):
-                            df.at[idx, "command_type"] = command_type
-                            df.at[idx, "command_duration_sec"] = (
-                                delay_duration if delay_duration > 0 else ""
-                            )
-                            matched_commands.add(id(command))
-
-                if id(command) not in matched_commands and balance_readings:
-                    closest_idx = _closest_reading_index(
-                        balance_readings,
-                        command_time,
-                        tolerance_seconds=DEFAULT_COMMAND_TOLERANCE_SECONDS,
-                    )
-                    if closest_idx is not None and closest_idx < len(df):
-                        current_command = df.at[closest_idx, "command_type"]
-                        if current_command in ("", "delay"):
-                            df.at[closest_idx, "command_type"] = command_type
-                            df.at[closest_idx, "command_duration_sec"] = (
-                                delay_duration if delay_duration > 0 else ""
-                            )
-                            matched_commands.add(id(command))
-                continue
-
-            closest_idx = _closest_reading_index(
-                balance_readings,
-                command_time,
-                tolerance_seconds=DEFAULT_COMMAND_TOLERANCE_SECONDS,
-            )
-
-            if closest_idx is None and command_type in IMPORTANT_COMMANDS and balance_readings:
-                closest_idx = min(
-                    range(len(balance_readings)),
-                    key=lambda idx: abs(_reading_time(balance_readings[idx]) - command_time),
-                )
-
-            if closest_idx is None or closest_idx >= len(df):
-                continue
-
-            current_command_type = df.at[closest_idx, "command_type"]
-            if current_command_type == "" or (
-                command_type in IMPORTANT_COMMANDS and current_command_type == "delay"
-            ):
-                _set_command_row(df, closest_idx, command)
-                matched_commands.add(id(command))
-
-        df.to_csv(csv_path, index=False)
-
-        matched_count = len(matched_commands)
-        total_commands = len(protocol_commands)
-        print(f"Merged {matched_count}/{total_commands} protocol commands with balance readings")
-        if matched_count < total_commands:
-            print(f"{total_commands - matched_count} commands could not be matched")
-        return df
+        return pd.read_csv(csv_path)
     except Exception as exc:  # pragma: no cover - preserves diagnostic behavior
-        print(f"Error merging protocol commands: {exc}")
+        print(f"Error reading merged CSV: {exc}")
         return None
 
 

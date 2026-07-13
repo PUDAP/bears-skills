@@ -6,6 +6,8 @@ Threaded monitors for viscosity optimization workflows.
   at ~4 Hz concurrently with an OT-2 run.
 - ``monitor_protocol_status_threaded`` — poll OT-2 run status and collect
   protocol commands via HTTP; sets ``stop_event`` when the run is terminal.
+- ``join_and_combine_viscosity_monitors`` — wait for both threads, then merge
+  OT-2 status/commands into balance readings via ``balance_data_process``.
 """
 
 from __future__ import annotations
@@ -243,18 +245,21 @@ def monitor_balance_threaded(
         result_dict["balance_readings"] = balance_readings
         result_dict["csv_path"] = csv_path
         result_dict["balance_complete"] = True
+        result_dict["balance_start_time"] = start_time
 
     except KeyboardInterrupt:
         print("Balance monitoring interrupted by user.")
         result_dict["balance_readings"] = balance_readings
         result_dict["csv_path"] = csv_path if balance_readings else None
         result_dict["balance_complete"] = True
+        result_dict["balance_start_time"] = start_time
 
     except Exception as exc:
         print(f"Balance monitoring error: {exc}")
         result_dict["balance_readings"] = []
         result_dict["csv_path"] = None
         result_dict["balance_complete"] = True
+        result_dict["balance_start_time"] = start_time
         result_dict["balance_error"] = str(exc)
 
 
@@ -443,6 +448,7 @@ def monitor_protocol_status_threaded(
 
     seen_ids: set[str] = set()
     commands: list[dict] = []
+    status_history: list[dict] = []
     last_status: str | None = None
     initial_run_id = run_id
     run_id_verified = False
@@ -451,11 +457,28 @@ def monitor_protocol_status_threaded(
     elapsed = 0
     protocol_complete = False
 
+    def _record_status(status: str) -> None:
+        nonlocal last_status
+        if status and status != last_status:
+            status_history.append({
+                "elapsed_time": time.time() - protocol_start_time,
+                "status": status,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            })
+            print(f"   [STATUS] Protocol status: {status}")
+            last_status = status
+
     def _finish(status: str) -> None:
         nonlocal protocol_complete
+        _record_status(status)
         print(f"[OK] Protocol completed with status: {status}")
-        result_dict.update(protocol_status=status, protocol_complete=True,
-                           protocol_commands=commands)
+        result_dict.update(
+            protocol_status=status,
+            protocol_complete=True,
+            protocol_commands=commands,
+            status_history=status_history,
+            protocol_start_time=protocol_start_time,
+        )
         stop_event.set()
         protocol_complete = True
 
@@ -488,9 +511,7 @@ def monitor_protocol_status_threaded(
                         if not run_id_verified:
                             run_id_verified = True
                             print(f"   [OK] Verified monitoring run ID: {current_run_id}")
-                        if status != last_status:
-                            print(f"   [STATUS] Protocol status: {status}")
-                            last_status = status
+                        _record_status(status)
                         _collect_commands(run_id)
                         conn_errors = 0
                     elif resp.status_code == 404:
@@ -530,9 +551,7 @@ def monitor_protocol_status_threaded(
                                 print(f"   [OK] Using run ID: {run_id}")
                             conn_errors = 0
                             _collect_commands(run_id)
-                            if status != last_status:
-                                print(f"   [STATUS] Protocol status: {status}")
-                                last_status = status
+                            _record_status(status)
                     else:
                         conn_errors += 1
                         if conn_errors == 1:
@@ -569,12 +588,59 @@ def monitor_protocol_status_threaded(
 
         if not protocol_complete:
             print("[WARN] Timeout waiting for protocol completion")
-            result_dict.update(protocol_status="timeout", protocol_complete=True,
-                               protocol_commands=commands)
+            result_dict.update(
+                protocol_status="timeout",
+                protocol_complete=True,
+                protocol_commands=commands,
+                status_history=status_history,
+                protocol_start_time=protocol_start_time,
+            )
             stop_event.set()
 
     except Exception as exc:
         print(f"[ERROR] Protocol monitoring error: {exc}")
-        result_dict.update(protocol_status="error", protocol_complete=True,
-                           protocol_commands=commands, protocol_error=str(exc))
+        result_dict.update(
+            protocol_status="error",
+            protocol_complete=True,
+            protocol_commands=commands,
+            status_history=status_history,
+            protocol_start_time=protocol_start_time,
+            protocol_error=str(exc),
+        )
         stop_event.set()
+
+
+def join_and_combine_viscosity_monitors(
+    *,
+    balance_thread: threading.Thread,
+    protocol_thread: threading.Thread,
+    stop_event: threading.Event,
+    balance_result: dict,
+    protocol_result: dict,
+    balance_start_time: float | None = None,
+    protocol_start_time: float | None = None,
+    balance_join_timeout: float | None = None,
+) -> dict:
+    """
+    Wait for protocol/balance monitor threads and merge their outputs.
+
+    Returns the combined result dict from ``combine_balance_and_protocol_results``.
+    """
+    from balance_data_process import combine_balance_and_protocol_results
+
+    protocol_thread.join()
+    stop_event.set()
+    balance_thread.join(timeout=balance_join_timeout)
+
+    if balance_start_time is not None:
+        balance_result["balance_start_time"] = balance_start_time
+    if protocol_start_time is not None:
+        protocol_result["protocol_start_time"] = protocol_start_time
+
+    return combine_balance_and_protocol_results(
+        balance_result,
+        protocol_result,
+        balance_start_time=balance_start_time,
+        protocol_start_time=protocol_start_time,
+        save_csv=True,
+    )
