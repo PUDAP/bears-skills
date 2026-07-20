@@ -101,6 +101,7 @@ Use this machine when:
 
 Before command generation:
 - Refer to: [opentrons-machine](references/opentrons-machine.md)
+- Before any physical Opentrons run, load and follow [puda-opentrons-vision-validation](../puda-opentrons-vision-validation/SKILL.md): capture a fresh deck image, verify every protocol slot is occupied by the expected labware/item, and ask the user to confirm uncertain or mismatched labware before execution.
 - Run `puda machine commands opentrons` to understand available commands
 - Follow all command types, params, sequencing rules, and labware constraints in `references/opentrons-machine.md`
 
@@ -143,6 +144,7 @@ When answering machine-selection questions:
 ## Critical sequencing rules
 - `opentrons` protocols must always end with no tip attached to any pipette.
 - `opentrons` deck slot (`location`) for every `load_labware` command must be explicitly confirmed by the user - **never assume a slot**.
+- Before any physical `opentrons` run, perform vision validation of deck-slot occupation/labware; do not run if a required slot is empty, mismatched, obstructed, or not visible unless the user explicitly approves.
 - `opentrons` `capture_image` must be its own standalone protocol - never combined with pipetting commands in the same protocol.
 - `balance` - always call `startup()` before reading and `shutdown()` after. Always tare before a dispense step. Always verify `fresh == True` before using a reading.
 - `elephant` - ensure the arm is connected and powered before motion. For electric gripper workflows after a power cycle, call `init_gripper()` before `open_gripper()` or `close_gripper()`. Prefer `scan()` before camera-guided work.

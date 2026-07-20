@@ -35,7 +35,7 @@ Before running:
 - Refer to: [example P shape](references/example/p-shape.md)
 - Protocol generator: [scripts/example/p_shape.py](scripts/example/p_shape.py)
 - Machine reference: [opentrons-machine](../bears-machines/references/opentrons-machine.md)
-- Ask the user to confirm all deck slots before generating or running the protocol
+- Ask the user to confirm all deck slots before generating the protocol, then run [puda-opentrons-vision-validation](../puda-opentrons-vision-validation/SKILL.md) before physical execution.
 
 ### Colour Mixing Optimization (`colour-mixing-opt`)
 
@@ -63,6 +63,7 @@ Workflow helper scripts: [`scripts/optimization_workflow/`](scripts/optimization
 
 Before running:
 - Refer to: [colour-mixing-opt](references/Optimization_workflow/colour-mixing-opt.md)
+- Before any physical OT-2 execution, run [puda-opentrons-vision-validation](../puda-opentrons-vision-validation/SKILL.md) to verify deck-slot occupation and labware against the planned protocol.
 - See optimization details: [optimization.md](references/Optimization_workflow/optimization.md)
 - See image processing details: [image-processing.md](references/Optimization_workflow/image-processing.md)
 - Optimizer classes: [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
@@ -96,7 +97,7 @@ Use this experiment when:
 
 Before running:
 - Refer to: [viscosity-optimization](references/Optimization_workflow/viscosity-optimization.md)
-- Optimizer classes: `SOVH_LCB`, `SOVH_EO`, and `SOVH_LLM` in [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
+- Before any physical OT-2 execution, run [puda-opentrons-vision-validation](../puda-opentrons-vision-validation/SKILL.md) to verify deck-slot occupation and labware against the planned protocol.
 - Machine references: [opentrons-machine](../bears-machines/references/opentrons-machine.md), [balance-machine](../bears-machines/references/balance-machine.md)
 - Data processing script: [scripts/optimization_workflow/balance_data_process.py](scripts/optimization_workflow/balance_data_process.py)
 - Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
