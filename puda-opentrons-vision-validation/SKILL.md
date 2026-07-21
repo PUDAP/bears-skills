@@ -73,13 +73,14 @@ When a request names a position such as `B2`:
 1. Normalize the position to uppercase row plus integer column.
 2. Verify that the position exists in the exact labware definition used by the protocol.
 3. Verify the labware's physical orientation from visible `A1`/row/column markings or another authoritative orientation cue. Never infer image-left/image-right coordinate orientation from a generic deck view.
-4. Annotate or crop the requested position in the **fresh image**.
-5. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
+4. Annotate or crop the requested position in the **fresh image**. Follow the rack/plate's perspective outline and include its complete A–H × 1–12 array before drawing a coordinate grid.
+5. Verify the coordinate-grid overlay against the visible well/tip centers. If row A or any other edge row/column is clipped, redraw before assessing the requested position.
+6. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
    - `tip present` — the requested position is visible and a tip is clearly seated there
    - `tip absent` — the requested position is visible and clearly empty
    - `needs confirmation` — rack and position are identified, but image detail cannot prove tip presence
    - `not visible` — orientation, occlusion, or framing prevents checking the position
-6. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
+7. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
 
 A full or partially filled rack must not be reported as having a tip at `B2` unless `B2` itself is resolved and visibly checked. If the camera resolution cannot distinguish an individual tip from an empty collar, say so rather than guessing.
 
@@ -95,13 +96,17 @@ Asset path: `assets/ot2-deck-slot-occupancy-example.jpg`
 
 Presentation conventions shown in the example:
 
-- Draw a separate rectangle around each standard deck slot, numbered **1–12**.
+- Draw a separate **perspective-aware quadrilateral/polygon** around each standard deck slot, numbered **1–12**.
+- Trace the visible physical slot outline. Do not reuse fixed axis-aligned rectangles when the camera is tilted.
 - Follow the physical layout exactly: front `1–3`, then `4–6`, `7–9`, and back `10–12`.
-- Put the slot number and status in a high-contrast label at the top-left of each rectangle.
+- Adjacent polygons must meet at the real shared boundary without extending into the neighbouring slot. In particular, the lower edges of slots 10/11 must not cover slot 7/8 labware.
+- Confirm that each polygon contains the complete slot and complete labware footprint. For a 96-position rack/plate, ensure rows **A–H** are inside the crop; a crop beginning at row B is invalid for coordinate validation.
+- Put the slot number and status in a high-contrast label near the polygon's top-left corner without obscuring wells/tips.
 - Use **green** for `EMPTY`, **red** for `OCCUPIED`, and **orange** for `OBSTRUCTED`.
 - Include an on-image legend using the same colours.
-- Keep the underlying labware visible with transparent or outline-only rectangles.
+- Keep the underlying labware visible with transparent or outline-only polygons.
 - Use `OBSTRUCTED`, rather than `EMPTY`, when cables or other objects prevent a confident check.
+- Run a second visual verification on the annotated image. Reject and redraw the overlay if any boundary crosses adjacent labware or clips any row/column needed for validation.
 
 When returning the result to the user, attach the annotated image and include concise occupied, empty, obstructed, and not-visible slot lists.
 
@@ -250,6 +255,9 @@ The only standing setup convention is the standard Opentrons trash bin in slot 1
 
 - [ ] Expected deck map extracted from the user request/protocol.
 - [ ] Fresh deck image captured and verified with path/size/hash.
+- [ ] Perspective-aware slot polygons follow visible physical outlines without crossing into adjacent slots.
+- [ ] Every 96-position crop includes complete rows A–H and columns 1–12.
+- [ ] Final annotated image independently rechecked for boundary/grid alignment.
 - [ ] Exact labware candidates compared against the live Opentrons Labware Library when identification is required.
 - [ ] Every requested well/tip coordinate validated against the exact labware definition.
 - [ ] Physical A1/row/column orientation established before mapping an image coordinate.
