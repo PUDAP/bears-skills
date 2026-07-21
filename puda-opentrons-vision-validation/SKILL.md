@@ -55,6 +55,36 @@ Vertical relationships:
 
 If a slot is outside the camera view or obscured, mark it `not visible` or `obscured`. Do not infer occupancy from neighbouring slots.
 
+## Labware Coordinates and Individual Tip Validation
+
+Use the **exact loaded labware definition** as the source of truth for valid well/tip names. Do not assume every plate or rack has the same coordinate set.
+
+For standard 96-position Corning plates and Opentrons 96-tip racks:
+
+- rows are **A–H** (eight rows), not A–G
+- columns are **1–12**
+- valid positions therefore run from `A1` through `H12`
+- `B2` means row **B**, column **2**
+
+If the user gives an A–G range for standard 96-position labware, flag the omitted row H. If the labware is custom and genuinely has only rows A–G, verify that against its custom definition instead of applying the standard 96-position convention.
+
+When a request names a position such as `B2`:
+
+1. Normalize the position to uppercase row plus integer column.
+2. Verify that the position exists in the exact labware definition used by the protocol.
+3. Verify the labware's physical orientation from visible `A1`/row/column markings or another authoritative orientation cue. Never infer image-left/image-right coordinate orientation from a generic deck view.
+4. Annotate or crop the requested position in the **fresh image**.
+5. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
+   - `tip present` — the requested position is visible and a tip is clearly seated there
+   - `tip absent` — the requested position is visible and clearly empty
+   - `needs confirmation` — rack and position are identified, but image detail cannot prove tip presence
+   - `not visible` — orientation, occlusion, or framing prevents checking the position
+6. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
+
+A full or partially filled rack must not be reported as having a tip at `B2` unless `B2` itself is resolved and visibly checked. If the camera resolution cannot distinguish an individual tip from an empty collar, say so rather than guessing.
+
+Completion criterion: every requested well/tip coordinate is valid for the exact definition, its physical orientation is established, and any requested pickup position has an explicit tip-presence status.
+
 ## Example Annotated Deck Image
 
 Use this image as the preferred presentation example for a full-deck occupancy check:
@@ -86,7 +116,7 @@ List every slot used by the planned Opentrons run:
 | 8 | 300 µL tiprack | tips |
 | 3 | mixing plate | destination |
 
-Completion criterion: every slot the protocol will use has an expected item, and any required-empty slots are explicitly listed.
+Completion criterion: every slot the protocol will use has an expected item, every requested source/destination well and tip position is listed, and any required-empty slots are explicitly listed.
 
 ### 2. Capture a Fresh Deck Image
 
@@ -221,6 +251,9 @@ The only standing setup convention is the standard Opentrons trash bin in slot 1
 - [ ] Expected deck map extracted from the user request/protocol.
 - [ ] Fresh deck image captured and verified with path/size/hash.
 - [ ] Exact labware candidates compared against the live Opentrons Labware Library when identification is required.
+- [ ] Every requested well/tip coordinate validated against the exact labware definition.
+- [ ] Physical A1/row/column orientation established before mapping an image coordinate.
+- [ ] Every requested pickup position inspected for individual tip presence and assigned an explicit status.
 - [ ] Result based only on the current expected deck map, fresh image, and skill/library references—not prior validation confirmations.
 - [ ] Official display name/API load name and confidence reported, or ambiguity explicitly marked.
 - [ ] Every expected slot inspected.
