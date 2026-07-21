@@ -14,7 +14,8 @@ These skills help agents select the correct PUDA-connected machine, load the rig
 |-------|-------------|
 | **bears-machines** | PUDA machines skill for machines at BEARS. Use when selecting a BEARS machine, checking capabilities, loading machine references, or generating machine/protocol commands. |
 | **bears-workflows** | PUDA workflow skill for BEARS experiments. Use when selecting, setting up, or running experiment workflows such as colour mixing optimization or viscosity optimization. |
-| **puda-opentrons-vision-validation** | Pre-run OT-2 deck vision validation. Use before physical Opentrons runs to capture a fresh image, verify occupied slots/labware, and ask the user to confirm uncertain or mismatched deck setup. |
+| **puda-machine-vision-validation** | Machine-neutral visual safety gate for BEARS. Selects a machine profile, captures fresh evidence, validates machine-native regions/objects/states, and blocks uncertain or mismatched execution. |
+| **puda-opentrons-vision-validation** | OT-2 adapter for the generic vision gate: deck slots, labware, pipette mounts, trash, and requested tip/well positions. |
 
 ## BEARS Machine Skills
 
@@ -26,8 +27,9 @@ The `bears-machines` skill covers PUDA-connected machines available at BEARS.
 | **Biologic Machine** | `biologic` | Electrochemical testing and characterization, including OCV, CA, PEIS, GEIS, CV, and MPP variants. |
 | **Balance Machine** | `balance` | Gravimetric mass measurement using an Arduino-based USB load-cell balance on Linux, with tare, freshness checks, and NATS telemetry. |
 | **Opentrons Machine** | `opentrons` | OT-2 liquid handling and protocol generation, including labware setup, pipetting, flow control, CSV-driven loops, and camera capture. |
+| **Elephant Machine** | `elephant` | Pro630 robot-arm motion, gripper control, camera-guided alignment, detection, pickup, and placement. |
 
-Before any physical Opentrons run, use `puda-opentrons-vision-validation` to visually verify the required deck slots and labware against the planned protocol.
+Before any physical workflow whose correctness or safety depends on visible setup, use `puda-machine-vision-validation` with the selected machine profile. Opentrons additionally loads `puda-opentrons-vision-validation`; other machines retain their own workspace, camera, calibration, and telemetry rules.
 
 
 ## BEARS Workflows

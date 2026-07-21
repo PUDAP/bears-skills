@@ -14,6 +14,12 @@ Provide machine-selection and capability guidance for PUDA workflows, then load 
 If you are unsure which machine should be used for a command, **ask the user** before proceeding.
 Do **not** assume.
 
+## Machine-Neutral Vision Gate
+
+Before any physical workflow whose safety or correctness depends on visible setup, load [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md). It selects the current machine profile, captures fresh evidence without motion when possible, validates machine-native regions/objects/states, and blocks uncertain or mismatched execution.
+
+Do not apply Opentrons deck slots, labware coordinates, or pipette assumptions to other machines. Opentrons uses its dedicated adapter; Elephant, First, Balance, Biologic, and future machines use their own workspace and telemetry rules.
+
 ## Machine Capabilities and When to Use
 
 ### First Machine (`machine_id: "first"`)
@@ -31,6 +37,7 @@ Use this machine when:
 
 Before command generation:
 - Refer to: [first-machine](references/first-machine.md)
+- If the workflow depends on visible deck, labware, tool, or required-empty-region setup, apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) using the First Machine workspace definition.
 - Run `puda machine commands first` to understand available commands
 - Follow constraints and sequencing in `references/first-machine.md`
 
@@ -50,9 +57,10 @@ Use this machine when:
 - The user asks for OCV, CA, EIS, CV, or MPP tests
 
 Before command generation:
-- Refer to: [biologic-machine](references/biologic-machine.md)
+- Consult the current Biologic driver/project documentation; this repository does not yet ship a Biologic machine reference file.
+- If the workflow includes a camera and an explicit cell/fixture/cable map, apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md); never treat imagery as proof of electrical continuity or channel readiness.
 - Run `puda machine commands biologic` to understand available commands
-- Follow constraints in `references/biologic-machine.md`
+- Follow constraints reported by the live command schema and current driver/project documentation.
 
 ### Balance Machine
 
@@ -73,6 +81,7 @@ Use this machine when:
 
 Before use:
 - Refer to: [balance-machine](references/balance-machine.md)
+- If a suitable camera exists and visible vessel/pan placement matters, apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md); still verify tare, calibration, connectivity, and freshness from balance telemetry.
 - Ask the user for the **Linux serial port** (`/dev/ttyUSB1`, etc.) - do not assume
 - Ensure the edge service is running (`uv run --package balance-edge python edge/balance.py`)
 
@@ -101,7 +110,7 @@ Use this machine when:
 
 Before command generation:
 - Refer to: [opentrons-machine](references/opentrons-machine.md)
-- Before any physical Opentrons run, load and follow [puda-opentrons-vision-validation](../puda-opentrons-vision-validation/SKILL.md): capture a fresh deck image, verify every protocol slot is occupied by the expected labware/item, and ask the user to confirm uncertain or mismatched labware before execution.
+- Before any physical Opentrons run, load [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md), then apply its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md): capture a fresh deck image, verify every protocol slot and requested tip position, and block uncertain or mismatched execution.
 - Run `puda machine commands opentrons` to understand available commands
 - Follow all command types, params, sequencing rules, and labware constraints in `references/opentrons-machine.md`
 
@@ -124,6 +133,7 @@ Use this machine when:
 
 Before command generation:
 - Refer to: [elephant-machine](references/elephant.md)
+- Before camera-guided motion or pick/place, apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with the active camera, known camera pose/calibration, target/tool state, workspace regions, and keep-out zones. Validation-only capture must not move the arm without approval.
 - Run `puda machine commands elephant` to understand available commands
 - Follow motion, gripper, camera, and sequencing constraints in `references/elephant.md`
 
@@ -142,6 +152,7 @@ When answering machine-selection questions:
 - If uncertain, ask a direct clarification question instead of guessing.
 
 ## Critical sequencing rules
+- For any machine whose workflow depends on visible physical setup, apply `puda-machine-vision-validation` with that machine's own profile before execution; do not reuse Opentrons geometry on other machines.
 - `opentrons` protocols must always end with no tip attached to any pipette.
 - `opentrons` deck slot (`location`) for every `load_labware` command must be explicitly confirmed by the user - **never assume a slot**.
 - Before any physical `opentrons` run, perform vision validation of deck-slot occupation/labware; do not run if a required slot is empty, mismatched, obstructed, or not visible unless the user explicitly approves.

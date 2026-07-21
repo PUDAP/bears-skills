@@ -1,11 +1,13 @@
 ---
 name: puda-opentrons-vision-validation
-description: Capture and inspect a fresh OT-2 deck image before BEARS Opentrons PUDA runs, verifying expected slot occupation and asking the user to confirm uncertain labware before execution.
+description: Opentrons OT-2 adapter for the BEARS machine-neutral vision gate. Capture and inspect a fresh deck image before PUDA runs, verify expected slots/labware and requested tip positions, and block uncertain physical execution.
 ---
 
 # Opentrons Vision Validation
 
 ## Goal
+
+This is the **Opentrons OT-2 adapter** for the machine-neutral [PUDA Machine Vision Validation](../puda-machine-vision-validation/SKILL.md) skill. Load the generic gate first, then use this adapter for OT-2-specific deck slots, labware definitions, pipette mounts, trash, and A1–H12 tip/well checks. Do not apply these OT-2 conventions to other BEARS machines.
 
 Prevent Opentrons OT-2 runs from starting with the wrong physical deck setup. Before any BEARS PUDA workflow executes a physical Opentrons run, capture a fresh deck image, verify the slots used by the protocol, identify visible labware/items, and stop for user confirmation when anything is uncertain or mismatched.
 
