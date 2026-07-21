@@ -14,10 +14,10 @@ These skills help agents select the correct PUDA-connected machine, load the rig
 |-------|-------------|
 | **bears-machines** | PUDA machines skill for machines at BEARS. Use when selecting a BEARS machine, checking capabilities, loading machine references, or generating machine/protocol commands. |
 | **bears-workflows** | PUDA workflow skill for BEARS experiments. Use when selecting, setting up, or running experiment workflows such as colour mixing optimization or viscosity optimization. |
-| **puda-machine-vision-validation** | Central environment- and machine-neutral visual safety gate from `PUDAP/skills`, shared across BEARS, IMRE, NTU, and future PUDA sites. |
-| **puda-opentrons-vision-validation** | OT-2 adapter for the central vision gate: deck semantics, labware, pipette mounts, trash, and requested tip/well positions. |
 
-`puda-machine-vision-validation` is a shared dependency maintained in `PUDAP/skills`; it is intentionally not duplicated in this environment repository.
+## Shared Vision-Validation Dependency
+
+The environment-neutral `puda-machine-vision-validation` skill and its `puda-opentrons-vision-validation` adapter are maintained in [`PUDAP/puda-vision-validation`](https://github.com/PUDAP/puda-vision-validation), not in this repository.
 
 ## BEARS Machine Skills
 

@@ -16,7 +16,7 @@ Do **not** assume.
 
 ## Machine-Neutral Vision Gate
 
-Before any physical workflow whose safety or correctness depends on visible setup, load `puda-machine-vision-validation`. It selects the current machine profile, captures fresh evidence without motion when possible, validates machine-native regions/objects/states, and blocks uncertain or mismatched execution.
+Before any physical workflow whose safety or correctness depends on visible setup, load `puda-machine-vision-validation` from `PUDAP/puda-vision-validation` (install with `puda skills install pudap/puda-vision-validation` if unavailable). It selects the current machine profile, captures fresh evidence without motion when possible, validates machine-native regions/objects/states, and blocks uncertain or mismatched execution.
 
 Do not apply Opentrons deck slots, labware coordinates, or pipette assumptions to other machines. Opentrons uses its dedicated adapter; Elephant, First, Balance, Biologic, and future machines use their own workspace and telemetry rules.
 
@@ -110,7 +110,7 @@ Use this machine when:
 
 Before command generation:
 - Refer to: [opentrons-machine](references/opentrons-machine.md)
-- Before any physical Opentrons run, load `puda-machine-vision-validation`, then apply its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md): capture a fresh deck image, verify every protocol slot and requested tip position, and block uncertain or mismatched execution.
+- Before any physical Opentrons run, load `puda-machine-vision-validation`, then apply the `puda-opentrons-vision-validation` adapter: capture a fresh deck image, verify every protocol slot and requested tip position, and block uncertain or mismatched execution.
 - Run `puda machine commands opentrons` to understand available commands
 - Follow all command types, params, sequencing rules, and labware constraints in `references/opentrons-machine.md`
 
