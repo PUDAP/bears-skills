@@ -73,18 +73,26 @@ When a request names a position such as `B2`:
 1. Normalize the position to uppercase row plus integer column.
 2. Verify that the position exists in the exact labware definition used by the protocol.
 3. Verify the labware's physical orientation from visible `A1`/row/column markings or another authoritative orientation cue. Never infer image-left/image-right coordinate orientation from a generic deck view.
-4. Annotate or crop the requested position in the **fresh image**. Follow the rack/plate's perspective outline and include its complete A–H × 1–12 array before drawing a coordinate grid.
-5. Verify the coordinate-grid overlay against the visible well/tip centers. If row A or any other edge row/column is clipped, redraw before assessing the requested position.
-6. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
+4. Crop the requested labware from the **fresh image** using its four visible outer corners.
+5. For coordinate grids, perspective-rectify that quadrilateral to a top-down rectangle with a homography, then draw an orthogonal grid matching the definition's row/column count. Do not draw a generic tilted grid directly on the camera image.
+6. Put row/column labels in margins outside the labware so they do not cover row A, edge columns, or the requested position.
+7. Verify that every visible well/tip center falls inside exactly one corresponding cell. If row A or another edge is clipped, centers drift across grid lines, or the four-corner calibration is uncertain, recalibrate before assessing the requested position.
+8. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
    - `tip present` — the requested position is visible and a tip is clearly seated there
    - `tip absent` — the requested position is visible and clearly empty
    - `needs confirmation` — rack and position are identified, but image detail cannot prove tip presence
    - `not visible` — orientation, occlusion, or framing prevents checking the position
-7. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
+9. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
 
 A full or partially filled rack must not be reported as having a tip at `B2` unless `B2` itself is resolved and visibly checked. If the camera resolution cannot distinguish an individual tip from an empty collar, say so rather than guessing.
 
 Completion criterion: every requested well/tip coordinate is valid for the exact definition, its physical orientation is established, and any requested pickup position has an explicit tip-presence status.
+
+Perspective-rectified coordinate example:
+
+![Rectified OT-2 tiprack grid with B3](assets/ot2-tiprack-rectified-grid-B3-example.jpg)
+
+The example straightens the camera perspective before drawing the 12 × 8 grid, keeps labels outside the rack, and highlights `B3` without hiding the tip collar.
 
 ## Example Annotated Deck Image
 
@@ -257,6 +265,9 @@ The only standing setup convention is the standard Opentrons trash bin in slot 1
 - [ ] Fresh deck image captured and verified with path/size/hash.
 - [ ] Perspective-aware slot polygons follow visible physical outlines without crossing into adjacent slots.
 - [ ] Every 96-position crop includes complete rows A–H and columns 1–12.
+- [ ] Coordinate crop perspective-rectified before drawing an orthogonal row/column grid.
+- [ ] Every visible well/tip center falls inside exactly one corresponding grid cell.
+- [ ] Grid labels remain outside the labware and do not obscure edge positions.
 - [ ] Final annotated image independently rechecked for boundary/grid alignment.
 - [ ] Exact labware candidates compared against the live Opentrons Labware Library when identification is required.
 - [ ] Every requested well/tip coordinate validated against the exact labware definition.
