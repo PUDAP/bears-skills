@@ -55,6 +55,26 @@ Vertical relationships:
 
 If a slot is outside the camera view or obscured, mark it `not visible` or `obscured`. Do not infer occupancy from neighbouring slots.
 
+## Example Annotated Deck Image
+
+Use this image as the preferred presentation example for a full-deck occupancy check:
+
+![Annotated OT-2 deck slots](assets/ot2-deck-slot-occupancy-example.jpg)
+
+Asset path: `assets/ot2-deck-slot-occupancy-example.jpg`
+
+Presentation conventions shown in the example:
+
+- Draw a separate rectangle around each standard deck slot, numbered **1–12**.
+- Follow the physical layout exactly: front `1–3`, then `4–6`, `7–9`, and back `10–12`.
+- Put the slot number and status in a high-contrast label at the top-left of each rectangle.
+- Use **green** for `EMPTY`, **red** for `OCCUPIED`, and **orange** for `OBSTRUCTED`.
+- Include an on-image legend using the same colours.
+- Keep the underlying labware visible with transparent or outline-only rectangles.
+- Use `OBSTRUCTED`, rather than `EMPTY`, when cables or other objects prevent a confident check.
+
+When returning the result to the user, attach the annotated image and include concise occupied, empty, obstructed, and not-visible slot lists.
+
 ## Vision Validation Workflow
 
 ### 1. Extract the Expected Deck Map
@@ -93,7 +113,9 @@ sha256sum /tmp/puda-latest-images/<unique-copy>.jpg
 
 Completion criterion: a new image file exists, has non-zero size, and its path/hash are recorded.
 
-### 3. Inspect the Image Conservatively
+### 3. Inspect and Identify the Image Conservatively
+
+Before assigning an exact labware identity, consult the live [Opentrons Labware Library](https://labware.opentrons.com/) and follow [the visual-identification reference](references/opentrons-labware-library-visual-identification.md). Compare the slot crop with official candidates from the correct category, report the official display name and API load name when supported, and distinguish OT-2 labware from Flex labware. Do not rely on colour alone.
 
 For each expected slot, report:
 
@@ -167,10 +189,28 @@ Required pre-run check:
 
 4. Stop and ask the user to confirm/correct slot 3 before executing the transfer.
 
+## Known Setup Conventions
+
+- On the user's BEARS OT-2 setup, **slot 12 contains the standard Opentrons trash bin**. Treat it as an expected fixed deck item, not as an unexpected obstruction. Report it as `Opentrons trash bin (expected)` unless the image shows a materially different object or the bin interferes with another required item.
+
+## Current-Run Evidence Policy
+
+Each vision validation must be independent. Determine the result from:
+
+1. the **current user-provided expected deck map**,
+2. a **fresh image captured for this validation**, and
+3. the labware-identification guidance and official Opentrons Labware Library references stored in this skill.
+
+Do **not** use a labware identity or slot assignment confirmed in an earlier validation as evidence for the current image. Deck contents may have changed between captures. Earlier user corrections may improve general inspection technique, but they must not determine the current result. If the fresh image cannot distinguish 300 µL from 1000 µL tips or one plate definition from another, report `needs confirmation` rather than importing the identity from a previous run.
+
+The only standing setup convention is the standard Opentrons trash bin in slot 12; even this must still be visibly present in the fresh image.
+
 ## Common Pitfalls
 
+- **Misclassifying the slot 12 trash bin.** On the user's BEARS OT-2 setup, the item in slot 12 is the expected Opentrons trash bin; do not label it `OBSTRUCTED` merely because it occupies the slot.
 - **Guessing labware from appearance.** Ask the user when exact labware identity is uncertain.
-- **Ignoring user corrections.** If the user says a slot is empty or names labware, immediately incorporate that correction into the current deck map.
+- **Carrying earlier confirmations into a fresh validation.** Never treat a labware identity or slot assignment from a previous capture as evidence for the current capture. Re-identify from the current request, fresh image, and skill/library references.
+- **Ignoring corrections within the current validation.** If the user corrects a slot or identity for the current fresh image, incorporate it only into that validation; do not persist it as evidence for future captures.
 - **Forgetting back-row slots.** Slot 10 is above 7, slot 11 above 8, and slot 12 above 9.
 - **Mistaking artifacts for occupancy.** Transparent lids, reflections, cables, and neighbouring labware can look like slot occupation.
 - **Running after a mismatch.** Stop until the user corrects the deck or explicitly approves proceeding.
@@ -180,6 +220,9 @@ Required pre-run check:
 
 - [ ] Expected deck map extracted from the user request/protocol.
 - [ ] Fresh deck image captured and verified with path/size/hash.
+- [ ] Exact labware candidates compared against the live Opentrons Labware Library when identification is required.
+- [ ] Result based only on the current expected deck map, fresh image, and skill/library references—not prior validation confirmations.
+- [ ] Official display name/API load name and confidence reported, or ambiguity explicitly marked.
 - [ ] Every expected slot inspected.
 - [ ] Unexpected occupied/obstructed slots reported.
 - [ ] Expected-vs-observed table produced.
