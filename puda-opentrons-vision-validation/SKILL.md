@@ -74,25 +74,20 @@ When a request names a position such as `B2`:
 2. Verify that the position exists in the exact labware definition used by the protocol.
 3. Verify the labware's physical orientation from visible `A1`/row/column markings or another authoritative orientation cue. Never infer image-left/image-right coordinate orientation from a generic deck view.
 4. Crop the requested labware from the **fresh image** using its four visible outer corners.
-5. For coordinate grids, perspective-rectify that quadrilateral to a top-down rectangle with a homography, then draw an orthogonal grid matching the definition's row/column count. Do not draw a generic tilted grid directly on the camera image.
-6. Put row/column labels in margins outside the labware so they do not cover row A, edge columns, or the requested position.
-7. Verify that every visible well/tip center falls inside exactly one corresponding cell. If row A or another edge is clipped, centers drift across grid lines, or the four-corner calibration is uncertain, recalibrate before assessing the requested position.
-8. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
+5. If perspective correction is needed, rectify that quadrilateral to a clean top-down view with a homography. Use coordinate geometry internally, but **do not draw a row/column grid over the tip or well image**.
+6. Validate the requested position from the clean crop by counting from the established A1 orientation and comparing it with its immediate neighbours. Preserve and present an unannotated crop as evidence.
+7. If a visual callout is useful, add only a small circle or arrow at the requested position and also keep the clean crop; do not overlay cell boundaries or a full coordinate lattice.
+8. If an edge row/column is clipped, the A1 orientation is uncertain, or the requested position is obscured, report `not visible` or `needs confirmation` rather than adding a grid to force a mapping.
+9. For tip pickup, inspect the requested position itself—not merely whether a tiprack occupies the slot—and report one of:
    - `tip present` — the requested position is visible and a tip is clearly seated there
    - `tip absent` — the requested position is visible and clearly empty
    - `needs confirmation` — rack and position are identified, but image detail cannot prove tip presence
    - `not visible` — orientation, occlusion, or framing prevents checking the position
-9. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
+10. Treat `tip absent`, invalid coordinates, uncertain rack orientation, and `not visible` as a failed execution gate. Treat `needs confirmation` as blocked pending user confirmation or a clearer fresh image.
 
 A full or partially filled rack must not be reported as having a tip at `B2` unless `B2` itself is resolved and visibly checked. If the camera resolution cannot distinguish an individual tip from an empty collar, say so rather than guessing.
 
 Completion criterion: every requested well/tip coordinate is valid for the exact definition, its physical orientation is established, and any requested pickup position has an explicit tip-presence status.
-
-Perspective-rectified coordinate example:
-
-![Rectified OT-2 tiprack grid with B3](assets/ot2-tiprack-rectified-grid-B3-example.jpg)
-
-The example straightens the camera perspective before drawing the 12 × 8 grid, keeps labels outside the rack, and highlights `B3` without hiding the tip collar.
 
 ## Example Annotated Deck Image
 
@@ -271,10 +266,11 @@ The only standing setup convention is the standard Opentrons trash bin in slot 1
 - [ ] Every polygon covers its complete physical slot from boundary to boundary without entering a neighbour.
 - [ ] Back-row polygons include the true top boundaries of slots 10–12.
 - [ ] Every 96-position crop includes complete rows A–H and columns 1–12.
-- [ ] Coordinate crop perspective-rectified before drawing an orthogonal row/column grid.
-- [ ] Every visible well/tip center falls inside exactly one corresponding grid cell.
-- [ ] Grid labels remain outside the labware and do not obscure edge positions.
-- [ ] Final annotated image independently rechecked for boundary/grid alignment.
+- [ ] Perspective correction, if used, produces a clean unannotated evidence crop.
+- [ ] No row/column grid is rendered over the tip or well image.
+- [ ] Requested position identified internally from established A1 orientation and checked against neighbours.
+- [ ] Any optional callout is limited to a small circle/arrow, with the clean crop retained.
+- [ ] Final annotated deck image independently rechecked for slot-boundary alignment.
 - [ ] Exact labware candidates compared against the live Opentrons Labware Library when identification is required.
 - [ ] Every requested well/tip coordinate validated against the exact labware definition.
 - [ ] Physical A1/row/column orientation established before mapping an image coordinate.
