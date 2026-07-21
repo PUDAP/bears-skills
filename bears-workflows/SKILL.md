@@ -35,7 +35,7 @@ Before running:
 - Refer to: [example P shape](references/example/p-shape.md)
 - Protocol generator: [scripts/example/p_shape.py](scripts/example/p_shape.py)
 - Machine reference: [opentrons-machine](../bears-machines/references/opentrons-machine.md)
-- Ask the user to confirm all deck slots before generating the protocol, then run [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md) before physical execution.
+- Ask the user to confirm all deck slots before generating the protocol, then run `puda-machine-vision-validation` with its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md) before physical execution.
 
 ### Colour Mixing Optimization (`colour-mixing-opt`)
 
@@ -63,7 +63,7 @@ Workflow helper scripts: [`scripts/optimization_workflow/`](scripts/optimization
 
 Before running:
 - Refer to: [colour-mixing-opt](references/Optimization_workflow/colour-mixing-opt.md)
-- Before any physical OT-2 execution, run [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md) to verify deck-slot occupation and labware against the planned protocol.
+- Before any physical OT-2 execution, run `puda-machine-vision-validation` with its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md) to verify deck-slot occupation and labware against the planned protocol.
 - See optimization details: [optimization.md](references/Optimization_workflow/optimization.md)
 - See image processing details: [image-processing.md](references/Optimization_workflow/image-processing.md)
 - Optimizer classes: [scripts/optimization_workflow/optimizers.py](scripts/optimization_workflow/optimizers.py)
@@ -97,7 +97,7 @@ Use this experiment when:
 
 Before running:
 - Refer to: [viscosity-optimization](references/Optimization_workflow/viscosity-optimization.md)
-- Before any physical OT-2 execution, run [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md) to verify deck-slot occupation and labware against the planned protocol.
+- Before any physical OT-2 execution, run `puda-machine-vision-validation` with its [Opentrons adapter](../puda-opentrons-vision-validation/SKILL.md) to verify deck-slot occupation and labware against the planned protocol.
 - Machine references: [opentrons-machine](../bears-machines/references/opentrons-machine.md), [balance-machine](../bears-machines/references/balance-machine.md)
 - Data processing script: [scripts/optimization_workflow/balance_data_process.py](scripts/optimization_workflow/balance_data_process.py)
 - Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
@@ -120,7 +120,7 @@ Use this experiment when:
 - The task involves checking whether the target object is centered between gripper fingers
 
 Before running:
-- Apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with the Elephant camera/pose, calibration, target, gripper markers, workspace, and keep-out regions; validation-only capture must not move the arm without approval.
+- Apply `puda-machine-vision-validation` with the Elephant camera/pose, calibration, target, gripper markers, workspace, and keep-out regions; validation-only capture must not move the arm without approval.
 - Refer to: [yolo-alignment](references/elephant/yolo-alignment.md)
 - YOLO alignment helper script: [scripts/elephant/yolo_alignment.py](scripts/elephant/yolo_alignment.py)
 - Combined viewer module: `python -m elephant_driver.combined_viewer`
@@ -147,7 +147,7 @@ Use this experiment when:
 - The workflow should use OpenRouter/OpenAI-compatible VLM calls rather than a local YOLO model
 
 Before running:
-- Apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with the Elephant Pi-camera pose/calibration, target description, gripper state, pickup/placement regions, and keep-out zones.
+- Apply `puda-machine-vision-validation` with the Elephant Pi-camera pose/calibration, target description, gripper state, pickup/placement regions, and keep-out zones.
 - Refer to: [vlm-move](references/elephant/vlm-move.md)
 - VLM move helper script: [scripts/elephant/vlm_move.py](scripts/elephant/vlm_move.py)
 - Elephant driver module: `elephant_driver`
@@ -168,7 +168,7 @@ Use this experiment when:
 - The task mentions `elephant_driver` or the Elephant Pro630 pick workflow
 
 Before running:
-- Apply [puda-machine-vision-validation](../puda-machine-vision-validation/SKILL.md) with the active Elephant camera/pose, calibration, target, gripper state, pickup/placement regions, and keep-out zones.
+- Apply `puda-machine-vision-validation` with the active Elephant camera/pose, calibration, target, gripper state, pickup/placement regions, and keep-out zones.
 - [elephant-pickup-object](references/elephant/elephant-pickup-object.md), [yolo-alignment](references/elephant/yolo-alignment.md)
 - [scripts/elephant/pickup_object.py](scripts/elephant/pickup_object.py)
 

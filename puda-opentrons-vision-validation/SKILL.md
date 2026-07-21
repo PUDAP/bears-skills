@@ -1,15 +1,15 @@
 ---
 name: puda-opentrons-vision-validation
-description: Opentrons OT-2 adapter for the BEARS machine-neutral vision gate. Capture and inspect a fresh deck image before PUDA runs, verify expected slots/labware and requested tip positions, and block uncertain physical execution.
+description: Opentrons OT-2 adapter for the environment-neutral PUDA vision gate. Capture and inspect a fresh site-scoped deck image, verify expected slots/labware and requested tip positions, and block uncertain physical execution.
 ---
 
 # Opentrons Vision Validation
 
 ## Goal
 
-This is the **Opentrons OT-2 adapter** for the machine-neutral [PUDA Machine Vision Validation](../puda-machine-vision-validation/SKILL.md) skill. Load the generic gate first, then use this adapter for OT-2-specific deck slots, labware definitions, pipette mounts, trash, and A1–H12 tip/well checks. Do not apply these OT-2 conventions to other BEARS machines.
+This is the **Opentrons OT-2 adapter** for the environment-neutral `puda-machine-vision-validation` skill. Load the generic gate first, then use this adapter for OT-2-specific deck slots, labware definitions, pipette mounts, trash, and A1–H12 tip/well checks. Camera calibration, slot polygons, endpoints, and current-scene evidence must remain scoped to the active environment (BEARS, IMRE, NTU, or another site).
 
-Prevent Opentrons OT-2 runs from starting with the wrong physical deck setup. Before any BEARS PUDA workflow executes a physical Opentrons run, capture a fresh deck image, verify the slots used by the protocol, identify visible labware/items, and stop for user confirmation when anything is uncertain or mismatched.
+Prevent Opentrons OT-2 runs from starting with the wrong physical deck setup. Before a physical Opentrons run in the active PUDA environment, capture a fresh image from that environment's configured camera, verify the slots used by the protocol, identify visible labware/items, and stop for user confirmation when anything is uncertain or mismatched.
 
 This is a **physical safety gate**. PUDA protocol validation checks command structure; it does not prove the robot deck contains the expected labware.
 
