@@ -104,11 +104,14 @@ Asset path: `assets/ot2-deck-slot-occupancy-example.jpg`
 
 Presentation conventions shown in the example:
 
-- Draw a separate **perspective-aware quadrilateral/polygon** around each standard deck slot, numbered **1–12**.
-- Trace the visible physical slot outline. Do not reuse fixed axis-aligned rectangles when the camera is tilted.
+- First calibrate a **shared 4 × 5 deck lattice** from the visible physical slot outlines: four vertical boundary lines and five horizontal boundary lines. Use their intersections as shared corner nodes.
+- Derive each slot polygon from four neighbouring lattice nodes. Do not estimate 12 polygons independently; adjacent slots must reuse the exact same edge and corner coordinates.
+- Use either a deck homography or piecewise perspective quadrilaterals when the camera is tilted, but anchor them to the physical slot perimeter—not to the visible labware footprint.
+- Cover the **entire physical slot space** from one shared boundary to the next. For back-row slots 10–12, include the true top deck boundary; do not start the polygon at the top edge of a plate, rack, label, or trash item.
 - Follow the physical layout exactly: front `1–3`, then `4–6`, `7–9`, and back `10–12`.
-- Adjacent polygons must meet at the real shared boundary without extending into the neighbouring slot. In particular, the lower edges of slots 10/11 must not cover slot 7/8 labware.
-- Confirm that each polygon contains the complete slot and complete labware footprint. For a 96-position rack/plate, ensure rows **A–H** are inside the crop; a crop beginning at row B is invalid for coordinate validation.
+- Adjacent polygons must meet at their real shared boundary with no gap and no overlap. In particular, slot 10 must share its complete lower edge with slot 7, and slot 11 with slot 8.
+- Confirm both **coverage and isolation**: every polygon contains the complete physical slot, while containing no area from a neighbouring slot.
+- For a 96-position rack/plate crop, ensure rows **A–H** are included; a crop beginning at row B is invalid for coordinate validation.
 - Put the slot number and status in a high-contrast label near the polygon's top-left corner without obscuring wells/tips.
 - Use **green** for `EMPTY`, **red** for `OCCUPIED`, and **orange** for `OBSTRUCTED`.
 - Include an on-image legend using the same colours.
@@ -263,7 +266,10 @@ The only standing setup convention is the standard Opentrons trash bin in slot 1
 
 - [ ] Expected deck map extracted from the user request/protocol.
 - [ ] Fresh deck image captured and verified with path/size/hash.
-- [ ] Perspective-aware slot polygons follow visible physical outlines without crossing into adjacent slots.
+- [ ] Shared 4 × 5 deck-lattice intersections calibrated from physical slot outlines.
+- [ ] Adjacent slot polygons reuse exact shared nodes/edges—no independently guessed boundaries.
+- [ ] Every polygon covers its complete physical slot from boundary to boundary without entering a neighbour.
+- [ ] Back-row polygons include the true top boundaries of slots 10–12.
 - [ ] Every 96-position crop includes complete rows A–H and columns 1–12.
 - [ ] Coordinate crop perspective-rectified before drawing an orthogonal row/column grid.
 - [ ] Every visible well/tip center falls inside exactly one corresponding grid cell.
