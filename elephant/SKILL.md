@@ -1,7 +1,7 @@
 ---
 name: elephant-blue-vial-yolo-pick-place
 description: Safely capture, detect, align, pick, relocate, and place a blue-cap glass vial with Elephant using Pi/top plus physical front/side YOLO and auditable PUDA protocols.
-version: 1.0.5
+version: 1.0.6
 author: Hermes Agent
 license: MIT
 platforms: [linux]
@@ -29,10 +29,10 @@ Scan pose:          [-250, 280, 330, -179.99, 0, 111]
 Default place pose: [-264.0, 175.0, 140.0, 179.99, 0.0, 113.0]
 Alignment height:   Z=170 mm
 Pickup/place height: Z=155 mm
-Normal explicit speed: 100
+Normal explicit speed: 1500
 ```
 
-Explicit protocol speed overrides the driver's default speed. Use `speed: 100` for this workflow unless the user requests otherwise.
+Use `speed: 1500` for this workflow. This matches the Elephant driver's configured default and should still be supplied explicitly in every movement and scan command unless the user requests another speed.
 
 ## Camera roles
 
@@ -99,7 +99,7 @@ puda machine state elephant
 [-250, 280, 330, -179.99, 0, 111]
 ```
 
-Treat the robot as already at scan when Cartesian position is within `±2 mm` per axis and orientation is within `±2°` per axis. If it is outside tolerance, run the Elephant `scan` command with explicit `speed: 100`, then verify the resulting pose and idle state. Wait about 5 seconds after reaching scan so the Pi frame is fresh and stable.
+Treat the robot as already at scan when Cartesian position is within `±2 mm` per axis and orientation is within `±2°` per axis. If it is outside tolerance, run the Elephant `scan` command with explicit `speed: 1500`, then verify the resulting pose and idle state. Wait about 5 seconds after reaching scan so the Pi frame is fresh and stable.
 
 Do not capture or convert Pi vial pixels before this scan-pose gate passes.
 
@@ -255,7 +255,7 @@ Run:
 
 1. `close_gripper`,
 2. vertical lift at the same XY to `Z=330 mm`,
-3. `scan` with explicit `speed: 100`.
+3. `scan` with explicit `speed: 1500`.
 
 The normal scan result is approximately:
 
@@ -292,7 +292,7 @@ For a request such as `dx=40, dy=-40, z=155`:
 1. While holding the vial at clearance height, run `move_relative` with:
 
 ```json
-{"dx": 40, "dy": -40, "dz": 0, "speed": 100}
+{"dx": 40, "dy": -40, "dz": 0, "speed": 1500}
 ```
 
 2. Read the achieved pose; do not assume exact commanded XY.
@@ -318,7 +318,7 @@ Interpret bare `z=155` in a placement request as an **absolute placement height*
       "machine_id": "elephant",
       "params": {
         "coords": [-250, 280, 330, -179.99, 0, 111],
-        "speed": 100
+        "speed": 1500
       }
     }
   ]
