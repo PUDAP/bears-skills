@@ -1,7 +1,7 @@
 ---
 name: elephant-blue-vial-yolo-pick-place
 description: Safely capture, detect, align, pick, relocate, and place a blue-cap glass vial with Elephant using Pi/top plus physical front/side YOLO and auditable PUDA protocols.
-version: 1.0.6
+version: 1.0.7
 author: Hermes Agent
 license: MIT
 platforms: [linux]
@@ -27,7 +27,7 @@ Capture directory:  /home/puda/elephant_captures
 YOLO model:         /home/puda/elephant/blue_vial_3cam_yolo26s_new_best_v2.pt
 Scan pose:          [-250, 280, 330, -179.99, 0, 111]
 Default place pose: [-264.0, 175.0, 140.0, 179.99, 0.0, 113.0]
-Alignment height:   Z=170 mm
+Alignment height:   Z=180 mm
 Pickup/place height: Z=155 mm
 Normal explicit speed: 1500
 ```
@@ -79,7 +79,7 @@ It should preserve the raw image, YOLO overlay, detection JSON, selected cap box
 8. Stop if a correction fails, changes the wrong sign, or does not improve the measured error. Do not repeat speculative motion.
 9. Do not use an ambiguous image target or an unverified affine conversion for final descent.
 10. Do not resend a close/open/final motion after PUDA already reported success; verify state and pose instead.
-11. For front/side YOLO alignment, move only to `Z=170 mm`. Do **not** descend to the `Z=155 mm` pickup position before both YOLO alignment gates pass.
+11. For front/side YOLO alignment, move only to `Z=180 mm` so the gripper stays clear of the vial top. Do **not** descend toward the `Z=155 mm` pickup position before both YOLO alignment gates pass.
 
 ## Phase 1 — move to scan, capture, and detect
 
@@ -146,10 +146,10 @@ If camera rotation, crop, scan pose, or the combined viewer configuration change
 From the high hover, descend vertically only to the dedicated YOLO alignment height:
 
 ```text
-[X_target, Y_target, 170, -179.99, 0, 111]
+[X_target, Y_target, 180, -179.99, 0, 111]
 ```
 
-This `Z=170 mm` move is the alignment move; it replaces any premature descent to the pickup position. Hold at `Z=170` while making all bounded XY corrections and recapturing YOLO evidence. Do **not** move to `Z=155 mm` yet.
+This `Z=180 mm` move is the alignment move; the extra 10 mm prevents the gripper from contacting the vial top during YOLO alignment. Hold at `Z=180` while making all bounded XY corrections and recapturing YOLO evidence. Do **not** move to `Z=155 mm` yet.
 
 After PUDA reports success:
 
@@ -221,7 +221,7 @@ pass when abs(side_offset_px) <= side_tolerance_px
 
 Do not apply the old open-loop `dx_mm = -side_offset_px * 0.35` rule or jump directly by `8 mm`; its sign was observed to be wrong at some workspace locations and it can pass through visual alignment before settling farther away.
 
-Use a closed-loop sign-calibration procedure at `Z=170`:
+Use a closed-loop sign-calibration procedure at `Z=180`:
 
 1. Make at most a `2 mm` X probe.
 2. Wait for the robot to finish and settle, then obtain a genuinely fresh frame.
@@ -342,7 +342,7 @@ Before reporting completion:
 - [ ] Initial Pi/top raw image, overlay, and detection JSON saved
 - [ ] Exactly one unambiguous vial detected
 - [ ] High hover completed and actual pose checked
-- [ ] Robot moved to `Z=170 mm` for YOLO alignment, without first descending to pickup height
+- [ ] Robot moved to `Z=180 mm` for YOLO alignment, without first descending to pickup height
 - [ ] Fresh direct HLS front and side images captured
 - [ ] Front gate passed
 - [ ] Side gate passed
