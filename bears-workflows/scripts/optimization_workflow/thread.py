@@ -141,8 +141,8 @@ def monitor_balance_threaded(
     cmd = [
         puda_exe,
         "machine", "watch",
-        "--targets", "balance",
-        "--subjects", "pos",
+        "--machines", "balance",
+        "--subjects", "tlm.pos",
         "--timeout", str(watch_chunk),
     ]
 

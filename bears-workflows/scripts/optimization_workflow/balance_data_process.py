@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
 IMPORTANT_COMMANDS = {"aspirate", "dispense"}
 DEFAULT_COMMAND_TOLERANCE_SECONDS = 1.5
 DEFAULT_OUTLIER_THRESHOLD_MG = 10000.0
-DEFAULT_PROCESSING_WINDOW_SECONDS = 30.0
+DEFAULT_PROCESSING_WINDOW_SECONDS: float | None = None
 
 
 def _viscosity_data_root() -> Path:
@@ -425,7 +425,7 @@ def analyze_viscosity_data(
     output_dir: str | Path,
     *,
     outlier_threshold_mg: float = DEFAULT_OUTLIER_THRESHOLD_MG,
-    window_seconds: float = DEFAULT_PROCESSING_WINDOW_SECONDS,
+    window_seconds: float | None = DEFAULT_PROCESSING_WINDOW_SECONDS,
 ):
     """
     Process one raw viscosity CSV into normalized time and mass-change data.
@@ -437,7 +437,8 @@ def analyze_viscosity_data(
     4. Select data from the first aspirate command to the last delay after it.
     5. Average delay-period readings per second.
     6. Normalize time and mass to start at 0.
-    7. Keep 0-window_seconds and extend the final value if the run is shorter.
+    7. Keep the full selected phase by default. If window_seconds is provided,
+       keep 0-window_seconds and extend the final value if the run is shorter.
     8. Save the processed CSV with the same filename in output_dir.
     """
     if not (_require_pandas() and _require_numpy()):
@@ -463,10 +464,12 @@ def analyze_viscosity_data(
 
     df["time"] = pd.to_numeric(df["time"], errors="coerce")
     df = df.dropna(subset=["time", "mass_mg"]).copy()
-    df_cleaned = df[df["mass_mg"] >= float(outlier_threshold_mg)].copy()
+    # Drop obvious balance startup/tare spikes. The threshold is an upper bound
+    # for valid signal, not a lower bound: keep rows below the threshold.
+    df_cleaned = df[df["mass_mg"].abs() < float(outlier_threshold_mg)].copy()
 
     if df_cleaned.empty:
-        print(f"Warning: no data remains after filtering mass_mg < {outlier_threshold_mg}")
+        print(f"Warning: no data remains after filtering abs(mass_mg) >= {outlier_threshold_mg}")
         return None
 
     aspirate_indices = df_cleaned[df_cleaned["command_type"] == "aspirate"].index
@@ -525,10 +528,13 @@ def analyze_viscosity_data(
     result_df = _normalize_and_window_data(
         df_combined["time"].to_numpy(),
         df_combined["mass_mg"].to_numpy(),
-        window_seconds=float(window_seconds),
+        window_seconds=None if window_seconds is None else float(window_seconds),
     )
     if result_df is None:
-        print(f"Warning: no data remains after filtering to 0-{window_seconds}s")
+        if window_seconds is None:
+            print("Warning: no data remains after normalizing the selected phase")
+        else:
+            print(f"Warning: no data remains after filtering to 0-{window_seconds}s")
         return None
 
     output_dir = Path(output_dir)
@@ -553,14 +559,21 @@ def analyze_viscosity_data(
     return result_df
 
 
-def _normalize_and_window_data(times: Any, masses_mg: Any, *, window_seconds: float):
+def _normalize_and_window_data(
+    times: Any,
+    masses_mg: Any,
+    *,
+    window_seconds: float | None,
+):
     if len(times) == 0:
         return None
 
     normalized_times = times - times[0]
     normalized_masses = masses_mg - masses_mg[0]
 
-    time_mask = (normalized_times >= 0) & (normalized_times <= window_seconds)
+    time_mask = normalized_times >= 0
+    if window_seconds is not None:
+        time_mask &= normalized_times <= window_seconds
     normalized_times = normalized_times[time_mask]
     normalized_masses = normalized_masses[time_mask]
 
@@ -572,7 +585,7 @@ def _normalize_and_window_data(times: Any, masses_mg: Any, *, window_seconds: fl
 
     last_time = normalized_times[-1]
     last_mass = normalized_masses[-1]
-    if last_time < window_seconds:
+    if window_seconds is not None and last_time < window_seconds:
         if len(normalized_times) > 1:
             time_step = float(np.mean(np.diff(normalized_times)))
             if time_step <= 0:
@@ -702,7 +715,7 @@ def plot_and_save_viscosity_graph(
         ax.set_ylabel("Relative Mass Change (mg)", fontsize=12)
         ax.set_title("Normalized Mass Change vs Time", fontsize=14, fontweight="bold")
         ax.grid(True, alpha=0.3)
-        ax.set_xlim(0, min(30, max(1.0, float(result_df["Time"].max()))))
+        ax.set_xlim(0, max(1.0, float(result_df["Time"].max())))
         fig.tight_layout()
         fig.savefig(graph_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
