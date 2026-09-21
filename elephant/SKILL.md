@@ -1,7 +1,7 @@
 ---
 name: elephant-blue-vial-yolo-pick-place
 description: Safely capture, detect, align, pick, relocate, and place a blue-cap glass vial with Elephant using Pi/top plus physical front/side YOLO and auditable PUDA protocols.
-version: 1.0.7
+version: 1.0.8
 author: Hermes Agent
 license: MIT
 platforms: [linux]
@@ -80,6 +80,24 @@ It should preserve the raw image, YOLO overlay, detection JSON, selected cap box
 9. Do not use an ambiguous image target or an unverified affine conversion for final descent.
 10. Do not resend a close/open/final motion after PUDA already reported success; verify state and pose instead.
 11. For front/side YOLO alignment, move only to `Z=180 mm` so the gripper stays clear of the vial top. Do **not** descend toward the `Z=155 mm` pickup position before both YOLO alignment gates pass.
+
+## Controller reboot and J6 recovery
+
+Use this recovery path if RoboFlow/LinuxCNC reports `USRMOT: ERROR: command timeout`, or if a controller reboot produces a discontinuous joint readback.
+
+1. Confirm the gripper is clear and obtain approval before restarting the controller.
+2. Stop `elephant-edge` before rebooting or launching RoboFlow. Keep it stopped until remote process and `ss` inspection show one RoboFlow process and a stable listener on TCP `5001` after the power-on sequence.
+3. Do not probe RoboFlow commands with one-shot `nc` connections. Abrupt client disconnects can crash this build with `QThread: Destroyed while thread is still running`. Restart the edge and use the normal persistent PUDA path for `get_angles`.
+4. Compare all six post-reboot angles against the saved baseline. Do not issue an absolute target when a joint has a large absolute/multi-turn discontinuity.
+5. The Elephant driver exposes `jog_joint_relative` only for bounded recovery. It accepts at most `10°` per command and waits for fresh readback within `0.2°`. Use it only with operator approval, in small increments, and stop on the first rejection or convergence failure.
+6. Once the joint returns to RoboFlow's accepted absolute range, prove `send_angle` with an exact-current/no-displacement target, then verify with a separate `get_angles` protocol.
+
+The local controller compatibility client must retain these safeguards:
+
+- serialize RoboFlow request/reply access with an `RLock`;
+- keep telemetry on the persistent socket instead of disconnecting it during in-flight command polling;
+- serialize PUDA `send_angle(joint_id, degree, speed)` as native `set_angle(Jn,value,speed)` and reject any acknowledgement other than `[ok]`;
+- keep `send_angles` as coordinated six-axis `set_angles(...)` motion.
 
 ## Phase 1 — move to scan, capture, and detect
 
