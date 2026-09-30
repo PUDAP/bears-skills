@@ -14,6 +14,7 @@ These skills help agents select the correct PUDA-connected machine, load the rig
 |-------|-------------|
 | **bears-machines** | PUDA machines skill for machines at BEARS. Use when selecting a BEARS machine, checking capabilities, loading machine references, or generating machine/protocol commands. |
 | **bears-workflows** | PUDA workflow skill for BEARS experiments. Use when selecting, setting up, or running experiment workflows such as colour mixing optimization or viscosity optimization. |
+| **[opentrons-gui](computer-use/opentrons-gui/SKILL.md)** | Opentrons desktop GUI navigation through Hermes computer use: Devices, Protocols, Labware, Linux targeting diagnostics, and robot-action safety boundaries. |
 | **puda-opentrons-vision-validation** | Pre-run OT-2 deck vision validation. Use before physical Opentrons runs to capture a fresh image, verify occupied slots/labware, and ask the user to confirm uncertain or mismatched deck setup. |
 
 ## BEARS Machine Skills
