@@ -468,30 +468,52 @@ def analyze_viscosity_data(
     # for valid signal, not a lower bound: keep rows below the threshold.
     df_cleaned = df[df["mass_mg"].abs() < float(outlier_threshold_mg)].copy()
 
+    # The broad operator threshold intentionally permits large valid accumulated
+    # masses, so it cannot reject a short electrical excursion by magnitude alone.
+    # Remove a one-sample excursion when its immediate neighbours agree. Preserve
+    # command timing in ``df`` below: only the mass sample is removed from the
+    # processing frame, including when the bad sample carries the aspirate marker.
+    isolated_spike_indices: list[Any] = []
+    masses = df_cleaned["mass_mg"].tolist()
+    indices = df_cleaned.index.tolist()
+    for position in range(1, len(masses) - 1):
+        neighbour_midpoint = 0.5 * (masses[position - 1] + masses[position + 1])
+        if (
+            abs(masses[position - 1] - masses[position + 1]) <= 50.0
+            and abs(masses[position] - neighbour_midpoint) >= 100.0
+        ):
+            isolated_spike_indices.append(indices[position])
+    if isolated_spike_indices:
+        df_cleaned = df_cleaned.drop(index=isolated_spike_indices)
+        print(
+            f"Removed {len(isolated_spike_indices)} isolated balance spike(s) "
+            "before viscosity phase normalization"
+        )
+
     if df_cleaned.empty:
         print(f"Warning: no data remains after filtering abs(mass_mg) >= {outlier_threshold_mg}")
         return None
 
-    aspirate_indices = df_cleaned[df_cleaned["command_type"] == "aspirate"].index
-    if len(aspirate_indices) == 0:
-        unique_commands = df_cleaned["command_type"].dropna().unique()
+    # Command timing is independent of mass-sample validity. A command marker may
+    # share a row with a rejected electrical spike, so obtain phase boundaries
+    # from the original merged frame and apply them to the cleaned mass frame.
+    aspirate_rows = df[df["command_type"] == "aspirate"]
+    if aspirate_rows.empty:
+        unique_commands = df["command_type"].dropna().unique()
         print(f"Warning: no 'aspirate' command found in {csv_file_path}")
         print(f"Available command types: {unique_commands}")
         return None
 
-    aspirate_start_idx = aspirate_indices[0]
-    aspirate_time = df_cleaned.loc[aspirate_start_idx, "time"]
-
-    delay_indices = df_cleaned[df_cleaned["command_type"] == "delay"].index
-    delay_indices_after_aspirate = delay_indices[delay_indices > aspirate_start_idx]
-    if len(delay_indices_after_aspirate) == 0:
+    aspirate_time = float(aspirate_rows.iloc[0]["time"])
+    delay_rows_after_aspirate = df[
+        (df["command_type"] == "delay") & (df["time"] > aspirate_time)
+    ]
+    if delay_rows_after_aspirate.empty:
         print(f"Warning: no 'delay' command found after 'aspirate' in {csv_file_path}")
         return None
 
-    first_delay_idx = delay_indices_after_aspirate[0]
-    last_delay_idx = delay_indices_after_aspirate[-1]
-    first_delay_time = df_cleaned.loc[first_delay_idx, "time"]
-    last_delay_time = df_cleaned.loc[last_delay_idx, "time"]
+    first_delay_time = float(delay_rows_after_aspirate.iloc[0]["time"])
+    last_delay_time = float(delay_rows_after_aspirate.iloc[-1]["time"])
 
     df_aspirate_to_delay = df_cleaned[
         (df_cleaned["time"] >= aspirate_time)
