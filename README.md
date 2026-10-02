@@ -13,7 +13,7 @@ These skills help agents select the correct PUDA-connected machine, load the rig
 | Skill | Description |
 |-------|-------------|
 | **bears-machines** | PUDA machines skill for machines at BEARS. Use when selecting a BEARS machine, checking capabilities, loading machine references, or generating machine/protocol commands. |
-| **bears-workflows** | PUDA workflow skill for BEARS experiments. Use when selecting, setting up, or running experiment workflows such as colour mixing optimization or viscosity optimization. |
+| **bears-workflows** | PUDA workflow skill for BEARS experiments. Use when selecting, setting up, or running experiment workflows such as colour mixing, viscosity, or RSI optimization. |
 | **puda-opentrons-vision-validation** | Pre-run OT-2 deck vision validation. Use before physical Opentrons runs to capture a fresh image, verify occupied slots/labware, and ask the user to confirm uncertain or mismatched deck setup. |
 
 ## BEARS Machine Skills
@@ -38,6 +38,7 @@ The `bears-workflows` skill covers PUDA experiment workflows used at BEARS.
 |----------|-------------|
 | **colour-mixing-opt** | Iterative RGB dye mixing optimization using OT-2 dispensing, camera feedback, image processing, RMSE scoring, and Bayesian Optimization or LLM suggestions. |
 | **viscosity-optimization** | Iterative tuning of OT-2 liquid handling parameters for viscous fluids using PUDA balance machine feedback, transfer-error calculation, Bayesian Optimization or LLM suggestions, and final `puda-report` reporting. |
+| **RSI optimization** | RSI-specific copy of the colour-mixing and viscosity optimization references and helper scripts, kept separate so RSI changes can evolve independently. See [`references/RSI optimization/`](bears-workflows/references/RSI%20optimization/) and [`scripts/RSI optimization/`](bears-workflows/scripts/RSI%20optimization/). |
 
 
 ## CLI Reference

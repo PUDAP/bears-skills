@@ -1,6 +1,6 @@
 ---
 name: bears-workflows
-description: Discover PUDA experiment workflows for bears and choose the right experiment for the task. Use when you need to run, set up, or understand a PUDA experiment such as colour mixing optimization.
+description: Discover PUDA experiment workflows for bears and choose the right experiment for the task. Use when you need to run, set up, or understand a PUDA experiment such as colour mixing, viscosity, or RSI optimization.
 ---
 
 # bears workflows
@@ -102,6 +102,22 @@ Before running:
 - Data processing script: [scripts/optimization_workflow/balance_data_process.py](scripts/optimization_workflow/balance_data_process.py)
 - Concurrent thread monitors: [scripts/optimization_workflow/thread.py](scripts/optimization_workflow/thread.py) (`monitor_balance_threaded`, `monitor_protocol_status_threaded`)
 - Protocol output: generate OT-2 Python with `Protocol.to_python_code()` and save it under `reports/SynologyDrive/viscosity_optimization/protocols/` unless `VISCOSITY_DATA_DIR` points to another SynologyDrive location
+
+### RSI Optimization (`RSI optimization`)
+
+Use this resource set when the user explicitly requests the **RSI optimization variant** of the optimization workflows.
+
+The RSI resource set currently mirrors the colour-mixing and viscosity optimization references and helper scripts. Keep RSI work isolated from the standard `Optimization_workflow` resources so that RSI-specific changes can evolve independently.
+
+Before running:
+- Load the applicable RSI reference from [`references/RSI optimization/`](references/RSI%20optimization/):
+  - [colour-mixing-opt](references/RSI%20optimization/colour-mixing-opt.md)
+  - [viscosity-optimization](references/RSI%20optimization/viscosity-optimization.md)
+  - [optimization details](references/RSI%20optimization/optimization.md)
+  - [image-processing details](references/RSI%20optimization/image-processing.md)
+- Use the RSI helper scripts in [`scripts/RSI optimization/`](scripts/RSI%20optimization/) rather than modifying the standard optimization helpers.
+- Apply the same inputs, safety gates, validation rules, and pre-run vision validation required by the corresponding standard workflow unless an RSI reference explicitly overrides them.
+- Because the folder name contains a space, invoke scripts by file path; do not treat `RSI optimization` as a Python package name.
 
 ### YOLO Alignment (`yolo-alignment`)
 
