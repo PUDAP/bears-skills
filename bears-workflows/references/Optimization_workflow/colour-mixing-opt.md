@@ -100,7 +100,7 @@ Ask the user how the target RGB should be obtained before starting:
 | Option | Workflow |
 |---|---|
 | `manual_rgb` | Use the existing method: the user directly provides the target `(R, G, B)` values, each 0-255. |
-| `measured_target_mix` | The user provides one red/green/blue/water volume combination. Generate and run a target-mix protocol, capture an image, process the target well, and use the measured median RGB as the target for optimization. |
+| `measured_target_mix` | The user provides one red/green/blue/water volume combination. Generate and run a target-mix protocol, capture an image, process the target well, and use the measured arithmetic-mean inner-well RGB as the target for optimization. |
 
 For `manual_rgb`:
 - Validate that the provided target has exactly three numeric values.
@@ -114,7 +114,7 @@ For `measured_target_mix`:
 - Generate a standalone protocol that dispenses only this target mix.
 - Execute the protocol, then capture one whole-wellplate image.
 - Run `run_pipeline(image_path, well_ids=[target_well], config=DEFAULT_CONFIG)`.
-- Use the measured median RGB from `target_well` as `(R_target, G_target, B_target)` for all later Delta E 2000 calculations.
+- Use the measured arithmetic-mean inner-well RGB from `target_well` as `(R_target, G_target, B_target)` for all later Delta E 2000 calculations.
 - Do not include the target-mix calibration well in `x_init` observations or optimizer history.
 - If protocol execution, image capture, or image processing fails, stop before generating `x_init` and require recovery.
 
@@ -208,29 +208,31 @@ Run numbering for image filenames:
 If `measured_target_mix` is used, also capture ONE image after the target-mix calibration protocol. This target image is used only to derive `(R_target, G_target, B_target)` and is not counted as `x_init` or as an optimization iteration.
 
 **Step 3a — Image processing (`x_init` and every optimization iteration)**
-The image processing pipeline uses fixed, calibrated parameters — no VLM is needed. Call `run_pipeline()` on the captured image. The steps run in this exact order:
-1. Apply fixed perspective correction using calibrated `src_corners` and `dst_corners` → flat deck image
-2. Slice the warped plate image into a `row_num × col_num` ROI grid (one patch per well)
-3. Compute median RGB for each requested well by `well_id`
+The image processing pipeline uses fixed BEARS calibration — no VLM is needed. Call `run_pipeline()` on the fresh full-resolution capture. The steps run in this exact order:
+1. Save a perspective-corrected plate overview using calibrated `src_corners` and `dst_corners`
+2. Use calibrated raw-image centres `[A1, A12, H12, H1]` to bilinearly interpolate all 96 well centres
+3. Extract one centred `8 × 8` raw-pixel patch fully inside each well opening
+4. Compute arithmetic-mean RGB from the exact pixels in each patch
+5. Save the raw-image ROI alignment, all-well patch/RGB montage, and RGB/coordinate CSV
 
-All parameters are stored in `DEFAULT_CONFIG` in `image_processing.py`. Re-calibrate only if the camera is physically moved. See [image-processing.md](image-processing.md) for the full field reference.
+All parameters are stored in `DEFAULT_CONFIG` in `image_processing.py`. Recalibrate if the camera framing, stream resolution, or plate position changes. See [image-processing.md](image-processing.md) for the full field reference.
 
 ---
 
 ### Phase 2 — Per-Iteration Loop
 
 **Step 4 — Image processing**
-Call `run_pipeline(image_path, well_ids, config=DEFAULT_CONFIG)` on the captured image. The pipeline uses fixed calibrated parameters for perspective correction and ROI slicing.
+Call `run_pipeline(image_path, well_ids, config=DEFAULT_CONFIG)` on the fresh captured image. The BEARS default uses calibrated raw-image corner-well centres and inner-well patches; the warped image is retained as an inspection artifact rather than the RGB sampling source.
 
 For the `x_init` image, `well_ids` must be the 3 user-selected `x_init` destination wells in the same order as the confirmed `x_init` mapping.
 
 See [image-processing.md](image-processing.md).
 
 **Step 5 — ROI extraction for all wells**
-Slice the warped plate image into one ROI patch per well, in row-major order (left to right, top to bottom). This covers every well on the plate regardless of whether it has a mix or is empty.
+Interpolate all 96 centres from `[A1, A12, H12, H1]`, with A1 at top-left. Extract a centred square patch from the raw image for each well in row-major order. Every patch must remain inside the inner-well opening and exclude the well rim and surrounding plate.
 
 **Step 6 — RGB extraction from active wells**
-Compute the median RGB for each extracted ROI patch. Then select the RGB values for the wells that contain the mixes (by `well_id`, derived from the protocol's well assignments):
+Compute arithmetic-mean RGB from every raw pixel in each inner-well patch. Save all-well ROI/RGB artifacts, then select the RGB values for wells containing mixes (by `well_id`, derived from the protocol's well assignments):
 - User-selected `x_init 1` well → `(R_mix_1, G_mix_1, B_mix_1)`
 - User-selected `x_init 2` well → `(R_mix_2, G_mix_2, B_mix_2)`
 - User-selected `x_init 3` well → `(R_mix_3, G_mix_3, B_mix_3)`

@@ -44,7 +44,7 @@ Use for **iterative RGB colour mixing to match a target colour via Delta E 2000 
 Capabilities:
 - Automated liquid handling on Opentrons OT-2 to mix R, G, B dye and water volumes
 - Camera capture of mixed colour after each dispensing step
-- VLM-based image processing and ROI extraction for per-well RGB measurement
+- Deterministic full-resolution image processing with calibrated inner-well ROI patches and per-well mean RGB measurement
 - Delta E 2000 calculation between mixed and target colour
 - Bayesian Optimization (BO), LLM-driven, or CO-HELIOS suggestion of next four-component `(R, G, B, water)` volume ratios
 - Iterative protocol generation and execution until maximum iterations is reached

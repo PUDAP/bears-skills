@@ -1,217 +1,175 @@
 ---
 name: colour-mixing-image-processing
-description: Deterministic image processing pipeline using PIL perspective warp, grid-based ROI slicing, and per-well RGB extraction. No VLM required. Calibrate once with ImageConfig; reuse for every captured image.
+description: Deterministic inner-well ROI extraction and RGB measurement for the fixed BEARS OT-2 camera.
 ---
 
 # Image Processing
 
 **Script**: [../../scripts/optimization_workflow/image_processing.py](../../scripts/optimization_workflow/image_processing.py)  
-**Dependencies**: `pip install numpy Pillow`
-
----
+**Dependencies**: `numpy`, `Pillow`
 
 ## Design
 
-The camera is in a fixed position. All geometry is calibrated once in `ImageConfig` and reused for every image. No VLM or runtime detection is needed.
+The BEARS camera is fixed above the OT-2 deck and streams at `1920 × 1080`. The default colour-mixing plate is in slot 5. Geometry is calibrated once and reused until the camera or plate position changes.
 
-```
+The extraction path intentionally uses a small square patch at the centre of each well. The patch must remain inside the visible inner-well opening; it must not include the well wall, rim, or surrounding plate.
+
+```text
 run_pipeline(image_path, well_ids, config)
     │
-    ├── Step 1  find_coeffs(dst_corners, src_corners)              →  8 coefficients
-    ├── Step 2  PIL Image.PERSPECTIVE transform                    →  warped image
-    ├── Step 3  crop_to_wellplate(warped, crop_box)                →  plate image  (skipped if crop_box=None)
-    ├── Step 4  get_grid_dimensions(plate, 12, 8)                  →  cell_w, cell_h
-    ├── Step 5  slice_roi_patches(plate, 12, 8, offset_array)      →  96 ROI patches
-    ├── Step 6  save_roi_debug_image(...)                          →  <name>_roi_debug.jpg
-    └── Step 7  extract_well_rgb(patches, well_ids)                →  {well_id: (R,G,B)}
+    ├── Save perspective-corrected plate image
+    ├── Interpolate 96 centres from A1, A12, H12, H1
+    ├── Crop one centred 8×8 raw-pixel patch per well
+    ├── Compute arithmetic-mean RGB for every patch
+    ├── Save exact ROI alignment on the raw image
+    ├── Save A1→H12 ROI-patch/RGB montage
+    ├── Save all ROI coordinates and RGB values as CSV
+    └── Return RGB values for the requested wells
 ```
 
-**Well orientation** — standard 96-well plate:
+## Orientation
 
+A1 is the top-left well. Columns 1–12 run left to right and rows A–H run top to bottom:
+
+```text
+       1     2              12
+A     A1    A2     ...     A12
+B     B1    B2     ...     B12
+...
+H     H1    H2     ...     H12
 ```
-       col 1   col 2  …  col 12
-row A   A1      A2         A12     ← top-left to top-right
-row B   B1      B2         B12
- …
-row H   H1      H2         H12     ← bottom-left to bottom-right
-```
 
----
+## `ImageConfig`
 
-## `ImageConfig` — Calibrated Parameters
+| Field | Purpose |
+|---|---|
+| `src_corners` | Visible raw-image plate bounds `[TL, TR, BR, BL]`, used for the saved warped overview. |
+| `dst_corners` | Destination bounds for the perspective-corrected overview. |
+| `plate_width`, `plate_height` | Warped overview dimensions. |
+| `col_num`, `row_num` | `12 × 8` for a 96-well plate. |
+| `well_center_corners` | Raw-image centres `[A1, A12, H12, H1]`; source of truth for ROI extraction. |
+| `inner_roi_size` | Side length of each centred square patch in raw pixels. Default: `8`. |
+| `offset_array` | Legacy warped-grid fallback used only when `well_center_corners=None`. |
 
-| Field | Type | Description |
-|---|---|---|
-| `src_corners` | `list[(x,y)]` × 4 | Wellplate corners in the **raw** image [TL, TR, BR, BL]. Measure from the actual photo. |
-| `dst_corners` | `list[(x,y)]` × 4 | Destination rectangle in the **output** image [TL, TR, BR, BL]. Typically `[(0,0),(W,0),(W,H),(0,H)]`. |
-| `plate_width` | int | Width in pixels of the warped output image. |
-| `plate_height` | int | Height in pixels of the warped output image. |
-| `col_num` | int | Grid columns — `12` for plate columns 1–12 (left → right). |
-| `row_num` | int | Grid rows — `8` for plate rows A–H (top → bottom). |
-| `offset_array` | `[[xl,xr],[yt,yb]]` | Pixel inset per grid cell — keeps ROI inside the well, away from the rim. |
-
-`output_size` is auto-derived as `(plate_width, plate_height)`.
-
-### Default Calibration (`DEFAULT_CONFIG`)
+### BEARS default calibration
 
 ```python
 DEFAULT_CONFIG = ImageConfig(
-    src_corners=[(207, 220), (310, 221), (309, 287), (208, 288)],
+    src_corners=[(678, 436), (949, 436), (949, 618), (678, 618)],
     dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
     plate_width=1800,
     plate_height=1200,
-    col_num=12,    # columns 1–12, left → right
-    row_num=8,     # rows A–H, top → bottom
+    col_num=12,
+    row_num=8,
     offset_array=[[54, 54], [54, 54]],
+    well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
+    inner_roi_size=8,
 )
 ```
 
----
+These coordinates were calibrated from a fresh `1920 × 1080` BEARS deck image with the wellplate in slot 5. Recalibrate after camera movement, zoom/focus changes that alter framing, stream-resolution changes, or plate repositioning.
 
-## Step 1 — Perspective Coefficients
+## Well-centre interpolation
 
-```
-find_coeffs(dst_corners, src_corners)  →  8 floats
-```
+`interpolate_well_centers()` takes the four corner-well centres in this exact order:
 
-Solves the 8×8 linear system (via `np.linalg.solve`) that maps the four raw plate corners (`src_corners`) to the flat destination rectangle (`dst_corners`). The 8 coefficients define the projective transform passed to PIL.
+1. A1 — top-left
+2. A12 — top-right
+3. H12 — bottom-right
+4. H1 — bottom-left
 
----
+It uses bilinear interpolation to calculate all 96 centres while preserving perspective skew. Returned order is row-major: A1, A2, …, A12, B1, …, H12.
 
-## Step 2 — Perspective Warp
+## Inner-well ROI extraction
 
-```
-raw image  →  PIL Image.PERSPECTIVE(coeffs)  →  flat plate image
-```
+`slice_inner_well_patches()` creates a centred square patch at every interpolated well centre.
 
-PIL applies the coefficients with bicubic interpolation (`Image.BICUBIC`). Result: a clean, upright, undistorted view of the wellplate exactly `plate_width × plate_height` pixels. The default configuration now warps to a higher-resolution `1800 × 1200` output so the corrected plate image and ROI patches are much clearer.
+Default patch size: `8 × 8` raw pixels.
 
-Saved as `<name>_warped.jpg`.
+The patch size is deliberately smaller than the visible inner-well diameter. Do not increase it merely to make the montage look larger; the montage enlarges patches for display using nearest-neighbour scaling. If the extraction box touches the rim or plate surface, reduce `inner_roi_size` or recalibrate `well_center_corners`.
 
----
+The function fails when:
 
-## Step 3 — Grid Dimensions
+- the patch size is zero or negative;
+- the corner-centre list does not contain exactly four points;
+- any ROI falls outside the raw image;
+- grid dimensions are invalid.
 
-```python
-cell_w, cell_h = get_grid_dimensions(plate_np, col_num=12, row_num=8)
-# e.g. cell_w = 1800/12 = 150.0 px,  cell_h = 1200/8 = 150.0 px
-```
+The older warped-grid `slice_roi_patches()` path remains available for custom configurations that explicitly set `well_center_corners=None`.
 
-Divides the warped plate image dimensions by the grid counts to get the floating-point size of each well cell. Used by both `slice_roi_patches` and `crop_well`.
+## RGB calculation
 
----
-
-## Step 4 — ROI Grid Slicing
-
-```
-warped plate image  →  slice_roi_patches(plate, 12, 8, offset_array)  →  96 patches + 96 boxes
-```
-
-Each cell is shrunk inward by `offset_array` so the ROI sits inside the well and avoids the rim. Patches are in row-major order: A1, A2, …, A12, B1, …, H12.
-
-### Single-well crop
-
-`crop_well(plate_np, "B3", 12, 8, offset_array)` returns `(patch_array, (x1,y1,x2,y2))` for just that well, without slicing the whole grid.
-
----
-
-## Step 5 — ROI Debug Image
-
-After slicing, `save_roi_debug_image()` draws a **red rectangle** at every ROI patch and labels it with:
-- **Well ID** (e.g. `A1`)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  A1  A2  A3  …  A12                                        │
-│  B1  B2  …                                                 │
-│  …                                                          │
-│  H1  …          H12                                         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Saved as `<name>_roi_debug.jpg`.
-
-**When RGB results look wrong, inspect this image first.** Misaligned rectangles mean `src_corners` or `offset_array` need adjusting.
-
----
-
-## Step 6 — RGB Extraction
+`mean_rgb()` calculates the arithmetic mean of every raw pixel in the inner-well patch:
 
 ```python
-rgb_values = extract_well_rgb(patches, well_ids=["A1","A2","A3"], col_num=12)
-# → {"A1": (210, 45, 30), "A2": (30, 190, 55), "A3": (20, 40, 200)}
+(R, G, B) = round(mean(patch_pixels, axis=(height, width)))
 ```
 
-Uses **median** per channel to suppress outlier pixels (dust, reflections, bubbles).
+The result therefore corresponds exactly to the displayed patch and CSV coordinates. Median RGB is no longer used by the default colour-mixing flow.
 
----
+## Artifacts
+
+For an input named `<name>.jpg`, `run_pipeline()` saves:
+
+| Artifact | Contents |
+|---|---|
+| `<name>_warped.jpg` | Perspective-corrected plate overview. |
+| `<name>_roi_debug.jpg` | Exact inner-well ROI boxes on the raw image; corner labels establish orientation. |
+| `<name>_roi_patches.png` | All 96 enlarged patches with well IDs and mean RGB values. |
+| `<name>_rgb.csv` | Well ID, coordinate space (`raw` or legacy `warped`), half-open bounds (`x1`, `y1`, `x2_exclusive`, `y2_exclusive`), and mean R/G/B values. |
+
+Custom paths can be supplied through `warped_save_path`, `roi_debug_save_path`, `roi_montage_save_path`, and `rgb_csv_save_path`.
 
 ## Usage
 
 ```python
-from scripts.optimization_workflow.image_processing import run_pipeline, DEFAULT_CONFIG
+from scripts.optimization_workflow.image_processing import DEFAULT_CONFIG, run_pipeline
 
 rgb_values = run_pipeline(
-    image_path="colour-RGB-blue_sample-1.jpg",
+    image_path="colour-RGB-sample-1.jpg",
     well_ids=["A1", "A2", "A3"],
     config=DEFAULT_CONFIG,
-    # optional — auto-derived from image_path if omitted:
-    # warped_save_path="colour-RGB-blue_sample-1_warped.jpg",
-    # roi_debug_save_path="colour-RGB-blue_sample-1_roi_debug.jpg",
 )
-# → {"A1": (210, 45, 30), "A2": (30, 190, 55), "A3": (20, 40, 200)}
 ```
 
-### Saved files per run
+The returned dictionary contains only requested wells, while the montage and CSV contain all 96 wells.
 
-| File | Description |
-|---|---|
-| `<name>_warped.jpg` | Full perspective-corrected image (always saved) |
-| `<name>_roi_debug.jpg` | Red ROI rectangles + well ID label at every well |
+## Recalibration procedure
 
-### Re-calibrating `src_corners`
+1. Capture a fresh full-resolution image with the pipette arm clear.
+2. Confirm the slot-5 plate and all 96 wells are visible.
+3. Establish orientation with A1 at top-left.
+4. Record the centre pixels of A1, A12, H12, and H1.
+5. Set `well_center_corners` in that exact order.
+6. Choose an `inner_roi_size` that remains fully inside the smallest visible well opening; use `8` for the current BEARS setup.
+7. Record the visible outer plate bounds as `src_corners` for the warped overview.
+8. Run `run_pipeline()` and inspect both `_roi_debug` and `_roi_patches`.
+9. Reject the calibration if any sampling box touches a rim, lies between wells, or maps A1 anywhere except top-left.
 
-Open the raw camera photo in any image viewer. Hover over each physical corner of the wellplate and read the `(x, y)` pixel coordinates:
-
-```
-src_corners = [
-    (x_TL, y_TL),   # top-left  corner of the plate
-    (x_TR, y_TR),   # top-right
-    (x_BR, y_BR),   # bottom-right
-    (x_BL, y_BL),   # bottom-left
-]
-```
-
-`plate_width` and `plate_height` set the output resolution. The default pipeline uses `1800 × 1200` so the warped image is clearer after perspective correction.
-
-The warped image is used directly for ROI extraction. If alignment changes, recalibrate `src_corners`, `plate_width`, `plate_height`, or `offset_array`.
-
----
+Completion criterion: all 96 boxes are centred inside their wells, each patch is the configured size, and the CSV contains exactly A1 through H12.
 
 ## Validation
 
-`validate_results(rgb_values)` checks:
+`validate_results()` checks:
 
-| Check | Condition | Failure action |
-|---|---|---|
-| RGB range | All R, G, B in 0–255 | `RuntimeError` |
-| Colour spread | At least one channel varies by > 10 across active wells | `RuntimeError` — check dispense completed |
+- every RGB channel is within `0–255`;
+- when multiple active wells are requested, at least one channel has the configured minimum inter-well spread.
 
-Colour-spread validation only runs when more than one well is requested. A single-well extraction is valid and should not fail just because there is nothing to compare it against.
+The image-processing tests additionally verify:
 
-Invalid well IDs are rejected before extraction. Examples:
-
-- `A0` fails because columns start at `1`
-- `A13` fails for a 12-column plate
-- `Z1` fails for an 8-row plate
-
----
+- bilinear centre ordering from A1 to H12;
+- exactly 96 patches;
+- exact `8 × 8` patch dimensions;
+- patches remain inside synthetic inner-well regions;
+- RGB uses arithmetic mean rather than median;
+- warped, debug, montage, and CSV artifacts are produced.
 
 ## Rules
 
-- Recalibrate `src_corners` whenever the camera is physically moved or refocused.
-- Capture **one image per iteration** after all dispenses are complete and the pipette arm is clear.
-- `run_pipeline()` always saves the warped image and the ROI debug image every call.
-- Warped and ROI debug JPEG outputs are saved with higher-quality settings to reduce visible compression blur.
-- Custom save paths can point to new directories; parent folders are created automatically.
-- Inspect `<name>_roi_debug.jpg` first when RGB results look wrong.
+- Use a fresh image for each optimization measurement.
+- Keep A1 at top-left; never silently rotate or mirror the mapping.
+- Sample the raw image, not an enhanced or contrast-adjusted copy.
+- Keep every ROI completely inside the well opening.
+- Calculate RGB from the same pixels saved as the ROI patch.
+- Inspect `_roi_debug.jpg` and `_roi_patches.png` before trusting changed calibration.
+- Recalibrate whenever framing changes.

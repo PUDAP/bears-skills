@@ -8,10 +8,10 @@ and stored in ImageConfig; every captured image uses the same values.
 Pipeline (applied to every captured image):
     Step 1 — Compute 8 perspective coefficients from src_corners → plate rectangle.
     Step 2 — Apply PIL Image.PERSPECTIVE → flat, undistorted wellplate image.
-    Step 3 — Compute grid cell dimensions from the plate image size.
-    Step 4 — Slice grid → one ROI patch per well (all 96 wells).
-    Step 5 — Save ROI debug overlay (red rectangles + well ID + W×H label).
-    Step 6 — Extract median RGB for each requested well by ID.
+    Step 3 — Bilinearly interpolate all 96 well centres from A1/A12/H12/H1.
+    Step 4 — Extract a small square ROI patch fully inside each well opening.
+    Step 5 — Save raw-image ROI debug and a labelled 96-patch RGB montage.
+    Step 6 — Extract arithmetic-mean RGB for each requested well by ID.
 
 Standard 96-well plate orientation:
     - Columns 1–12 run left → right in the image.
@@ -24,6 +24,7 @@ Dependencies:
 
 from __future__ import annotations
 
+import csv
 import os
 from dataclasses import dataclass
 
@@ -52,12 +53,18 @@ class ImageConfig:
         plate_width:  Width in pixels of the warped output image.
         plate_height: Height in pixels of the warped output image.
 
-    ROI grid (applied to the warped plate image):
+    ROI extraction:
         col_num:      Columns in the grid. 12 for a 96-well plate (cols 1–12).
         row_num:      Rows in the grid. 8 for a 96-well plate (rows A–H).
-        offset_array: [[x_pad_left, x_pad_right], [y_pad_top, y_pad_bottom]]
-                      Pixel inset per grid cell — keeps the ROI inside the well
-                      and away from the rim.
+        offset_array: Legacy warped-grid inset used only when
+                      well_center_corners is not configured.
+        well_center_corners:
+                      Raw-image centres of [A1, A12, H12, H1]. The pipeline
+                      bilinearly interpolates the other 92 well centres.
+        inner_roi_size:
+                      Side length in raw-image pixels for each centred square
+                      ROI. Keep this smaller than the visible inner-well
+                      diameter so the patch never includes the rim or plate.
     """
     src_corners: list[tuple[int, int]]
     dst_corners: list[tuple[int, int]]
@@ -66,6 +73,8 @@ class ImageConfig:
     col_num: int
     row_num: int
     offset_array: list[list[int]]
+    well_center_corners: list[tuple[float, float]] | None = None
+    inner_roi_size: int = 8
 
     @property
     def output_size(self) -> tuple[int, int]:
@@ -73,17 +82,19 @@ class ImageConfig:
         return (self.plate_width, self.plate_height)
 
 
-# Default calibration for the standard OT-2 camera rig.
-# Adjust src_corners if the camera is repositioned.
-# Adjust plate_width/plate_height to control warp output resolution.
+# Default calibration for the BEARS OT-2 slot-5 camera rig at 1920×1080.
+# src_corners are the visible plate bounds; well_center_corners are the centres
+# of A1, A12, H12, and H1 in that same raw image.
 DEFAULT_CONFIG = ImageConfig(
-    src_corners=[(207, 220), (310, 221), (309, 287), (208, 288)],
+    src_corners=[(678, 436), (949, 436), (949, 618), (678, 618)],
     dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
     plate_width=1800,
     plate_height=1200,
     col_num=12,    # columns 1–12, left → right
     row_num=8,     # rows A–H, top → bottom
-    offset_array=[[54, 54], [54, 54]],
+    offset_array=[[54, 54], [54, 54]],  # legacy warped-grid fallback
+    well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
+    inner_roi_size=8,
 )
 
 
@@ -204,6 +215,74 @@ def slice_roi_patches(
             _validate_roi_box(x1, y1, x2, y2, well_id)
             patches.append(plate_np[y1:y2, x1:x2])
             roi_boxes.append((x1, y1, x2, y2))
+
+    return patches, roi_boxes
+
+
+def interpolate_well_centers(
+    corner_centers: list[tuple[float, float]],
+    col_num: int,
+    row_num: int,
+) -> list[tuple[float, float]]:
+    """Interpolate row-major well centres from [A1, A12, H12, H1]."""
+    if len(corner_centers) != 4:
+        raise ValueError("corner_centers must contain [A1, A12, H12, H1].")
+    if col_num < 2 or row_num < 2:
+        raise ValueError("col_num and row_num must both be at least 2.")
+
+    top_left, top_right, bottom_right, bottom_left = corner_centers
+    centers: list[tuple[float, float]] = []
+    for row in range(row_num):
+        v = row / (row_num - 1)
+        for col in range(col_num):
+            u = col / (col_num - 1)
+            x = (
+                (1 - u) * (1 - v) * top_left[0]
+                + u * (1 - v) * top_right[0]
+                + u * v * bottom_right[0]
+                + (1 - u) * v * bottom_left[0]
+            )
+            y = (
+                (1 - u) * (1 - v) * top_left[1]
+                + u * (1 - v) * top_right[1]
+                + u * v * bottom_right[1]
+                + (1 - u) * v * bottom_left[1]
+            )
+            centers.append((x, y))
+    return centers
+
+
+def slice_inner_well_patches(
+    raw_np: np.ndarray,
+    corner_centers: list[tuple[float, float]],
+    col_num: int,
+    row_num: int,
+    roi_size: int,
+) -> tuple[list[np.ndarray], list[tuple[int, int, int, int]]]:
+    """Extract centred square patches that remain inside each well opening."""
+    if roi_size <= 0:
+        raise ValueError("roi_size must be positive.")
+
+    image_h, image_w = raw_np.shape[:2]
+    patches: list[np.ndarray] = []
+    roi_boxes: list[tuple[int, int, int, int]] = []
+    for idx, (center_x, center_y) in enumerate(
+        interpolate_well_centers(corner_centers, col_num, row_num)
+    ):
+        row, col = divmod(idx, col_num)
+        well_id = f"{chr(ord('A') + row)}{col + 1}"
+        x1 = int(round(center_x - roi_size / 2))
+        y1 = int(round(center_y - roi_size / 2))
+        x2 = x1 + roi_size
+        y2 = y1 + roi_size
+        _validate_roi_box(x1, y1, x2, y2, well_id)
+        if x1 < 0 or y1 < 0 or x2 > image_w or y2 > image_h:
+            raise ValueError(
+                f"Inner ROI for {well_id} falls outside the raw image: "
+                f"({x1}, {y1}, {x2}, {y2}) vs {image_w}×{image_h}."
+            )
+        patches.append(raw_np[y1:y2, x1:x2])
+        roi_boxes.append((x1, y1, x2, y2))
 
     return patches, roi_boxes
 
@@ -355,19 +434,154 @@ def save_roi_debug_image(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    rows = "ABCDEFGH"
     for idx, (x1, y1, x2, y2) in enumerate(roi_boxes):
         row_idx = idx // col_num
         col_idx = idx % col_num
-        well_id = f"{rows[row_idx]}{col_idx + 1}"
+        well_id = f"{chr(ord('A') + row_idx)}{col_idx + 1}"
         patch_w, patch_h = x2 - x1, y2 - y1
         label = f"{well_id} {patch_w}×{patch_h}"
 
-        draw.rectangle([x1, y1, x2, y2], outline=outline_colour, width=outline_width)
+        draw.rectangle(
+            [x1, y1, x2 - 1, y2 - 1],
+            outline=outline_colour,
+            width=outline_width,
+        )
         draw.text((x1 + 1, y1 + 1), label, fill=outline_colour, font=font)
 
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
     save_pil_image(debug_pil, save_path)
+    return save_path
+
+
+def save_inner_roi_debug_image(
+    raw_np: np.ndarray,
+    roi_boxes: list[tuple[int, int, int, int]],
+    save_path: str,
+    col_num: int,
+    row_num: int,
+    outline_colour: tuple[int, int, int] = (0, 255, 255),
+) -> str:
+    """Draw the exact inner-well sampling boxes on the unwarped raw image."""
+    debug_pil = Image.fromarray(raw_np.astype(np.uint8))
+    draw = ImageDraw.Draw(debug_pil)
+    for x1, y1, x2, y2 in roi_boxes:
+        draw.rectangle([x1, y1, x2 - 1, y2 - 1], outline=outline_colour, width=1)
+
+    last_row = chr(ord("A") + row_num - 1)
+    corner_indices = {
+        0: "A1",
+        col_num - 1: f"A{col_num}",
+        len(roi_boxes) - col_num: f"{last_row}1",
+        len(roi_boxes) - 1: f"{last_row}{col_num}",
+    }
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 13)
+    except (OSError, IOError):
+        font = ImageFont.load_default()
+    for idx, label in corner_indices.items():
+        x1, y1, x2, y2 = roi_boxes[idx]
+        draw.text(
+            (x1, y1 - 16 if idx < col_num else y2 + 2),
+            label,
+            fill=(255, 255, 0),
+            font=font,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0),
+        )
+
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+    save_pil_image(debug_pil, save_path)
+    return save_path
+
+
+def save_roi_patch_montage(
+    patches: list[np.ndarray],
+    rgb_values: dict[str, tuple[int, int, int]],
+    save_path: str,
+    col_num: int,
+    row_num: int,
+) -> str:
+    """Save an A1→H12 montage with each inner patch and mean RGB value."""
+    expected = col_num * row_num
+    if len(patches) != expected:
+        raise ValueError(f"Expected {expected} patches, got {len(patches)}.")
+
+    tile_w, tile_h = 118, 118
+    margin, header = 20, 65
+    montage = Image.new(
+        "RGB",
+        (margin * 2 + col_num * tile_w, header + margin + row_num * tile_h),
+        (246, 248, 251),
+    )
+    draw = ImageDraw.Draw(montage)
+    try:
+        bold = ImageFont.truetype("DejaVuSans-Bold.ttf", 13)
+        text = ImageFont.truetype("DejaVuSans.ttf", 11)
+        tiny = ImageFont.truetype("DejaVuSans-Bold.ttf", 10)
+    except (OSError, IOError):
+        bold = text = tiny = ImageFont.load_default()
+
+    draw.text((margin, 10), "Inner-well ROI patches and mean RGB", fill=(20, 25, 35), font=bold)
+    draw.text(
+        (margin, 32),
+        "A1 top-left; each patch remains inside the well opening",
+        fill=(65, 75, 90),
+        font=text,
+    )
+    for idx, patch in enumerate(patches):
+        row, col = divmod(idx, col_num)
+        well_id = f"{chr(ord('A') + row)}{col + 1}"
+        base_x, base_y = margin + col * tile_w, header + row * tile_h
+        patch_image = Image.fromarray(patch.astype(np.uint8)).resize(
+            (72, 72), Image.Resampling.NEAREST
+        )
+        x, y = base_x + 23, base_y + 18
+        montage.paste(patch_image, (x, y))
+        draw.rectangle((x - 1, y - 1, x + 72, y + 72), outline=(55, 65, 80), width=1)
+        draw.text((base_x + 48, base_y + 3), well_id, fill=(20, 25, 35), font=tiny)
+        rgb = rgb_values[well_id]
+        rgb_text = f"{rgb[0]},{rgb[1]},{rgb[2]}"
+        draw.text((base_x + 31, base_y + 93), rgb_text, fill=(20, 25, 35), font=text)
+        draw.rectangle(
+            (base_x + 49, base_y + 108, base_x + 69, base_y + 115),
+            fill=rgb,
+            outline=(70, 70, 70),
+        )
+
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+    save_pil_image(montage, save_path)
+    return save_path
+
+
+def save_rgb_csv(
+    rgb_values: dict[str, tuple[int, int, int]],
+    roi_boxes: list[tuple[int, int, int, int]],
+    save_path: str,
+    coordinate_space: str,
+) -> str:
+    """Save well RGB values with half-open ROI bounds and coordinate space."""
+    if coordinate_space not in {"raw", "warped"}:
+        raise ValueError("coordinate_space must be 'raw' or 'warped'.")
+    if len(rgb_values) != len(roi_boxes):
+        raise ValueError("rgb_values and roi_boxes must have the same length.")
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+    with open(save_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "well",
+                "coordinate_space",
+                "x1",
+                "y1",
+                "x2_exclusive",
+                "y2_exclusive",
+                "mean_R",
+                "mean_G",
+                "mean_B",
+            ]
+        )
+        for (well_id, rgb), (x1, y1, x2, y2) in zip(rgb_values.items(), roi_boxes):
+            writer.writerow([well_id, coordinate_space, x1, y1, x2, y2, *rgb])
     return save_path
 
 
@@ -392,21 +606,22 @@ def save_pil_image(image: Image.Image, save_path: str) -> None:
 
 def mean_rgb(patch: np.ndarray) -> tuple[int, int, int]:
     """
-    Compute the median RGB of a well ROI patch.
+    Compute arithmetic-mean RGB for one inner-well ROI patch.
 
-    Uses median instead of mean to suppress outlier pixels (dust, reflections).
+    The ROI geometry is responsible for excluding the well rim and surrounding
+    plate. Averaging every raw pixel in that interior patch matches the saved
+    patch montage and CSV values exactly.
 
     Args:
         patch: ROI patch as NumPy array (H, W, 3) in RGB.
 
     Returns:
-        (R, G, B) median values as integers 0–255.
+        (R, G, B) arithmetic means rounded to integers 0–255.
     """
-    return (
-        int(np.median(patch[:, :, 0])),
-        int(np.median(patch[:, :, 1])),
-        int(np.median(patch[:, :, 2])),
-    )
+    if patch.size == 0:
+        raise ValueError("Cannot compute RGB from an empty ROI patch.")
+    channel_means = np.rint(np.mean(patch, axis=(0, 1))).astype(int)
+    return int(channel_means[0]), int(channel_means[1]), int(channel_means[2])
 
 
 def extract_well_rgb(
@@ -415,7 +630,7 @@ def extract_well_rgb(
     col_num: int,
 ) -> dict[str, tuple[int, int, int]]:
     """
-    Extract the median RGB value for each specified well.
+    Extract the arithmetic-mean RGB value for each specified well.
 
     Args:
         patches:  Full list of ROI patches from slice_roi_patches() — all wells.
@@ -423,7 +638,7 @@ def extract_well_rgb(
         col_num:  Number of grid columns used during slicing (12).
 
     Returns:
-        Dict mapping each well_id to its (R, G, B) median tuple.
+        Dict mapping each well_id to its arithmetic-mean (R, G, B) tuple.
     """
     if col_num <= 0:
         raise ValueError("col_num must be positive.")
@@ -496,36 +711,31 @@ def run_pipeline(
     config: ImageConfig = DEFAULT_CONFIG,
     warped_save_path: str | None = None,
     roi_debug_save_path: str | None = None,
+    roi_montage_save_path: str | None = None,
+    rgb_csv_save_path: str | None = None,
 ) -> dict[str, tuple[int, int, int]]:
     """
     Run the full image processing pipeline for one captured image.
 
     Steps:
-        1. Load raw image and compute perspective coefficients.
-        2. Apply PIL Image.PERSPECTIVE → flat warped image.
-        3. Compute grid cell dimensions from the warped plate image.
-        4. Slice grid into per-well ROI patches (all wells).
-        5. Save ROI debug overlay (red rectangles + well ID per cell).
-        6. Extract median RGB for each requested well_id.
-        7. Validate results.
+        1. Load the raw image and save a perspective-corrected plate view.
+        2. Interpolate all well centres from calibrated A1/A12/H12/H1 centres.
+        3. Extract one centred square patch fully inside each well opening.
+        4. Save raw-image ROI alignment, patch montage, and RGB CSV artifacts.
+        5. Compute arithmetic-mean RGB for every patch and select well_ids.
+        6. Validate the requested RGB values.
+
+    If well_center_corners is None, the legacy warped-grid ROI path remains
+    available for older/custom ImageConfig instances.
 
     Saved files (paths auto-derived from image_path if not supplied):
-        <name>_warped.jpg     — full perspective-corrected image.
-        <name>_roi_debug.jpg  — debug overlay with red ROI boxes and labels.
-
-    Args:
-        image_path:          Path to the raw captured deck image.
-        well_ids:            Well IDs to extract RGB for, e.g. ["A1","A2","A3"].
-        config:              ImageConfig. Defaults to DEFAULT_CONFIG.
-        warped_save_path:    Optional path for the warped image.
-        roi_debug_save_path: Optional path for the ROI debug overlay.
+        <name>_warped.jpg       — perspective-corrected plate image.
+        <name>_roi_debug.jpg    — exact ROI boxes on the image used for sampling.
+        <name>_roi_patches.png  — A1→H12 patch montage with mean RGB values.
+        <name>_rgb.csv          — all 96 mean RGB values and ROI coordinates.
 
     Returns:
-        {"A1": (R, G, B), "A2": (R, G, B), ...}
-
-    Raises:
-        FileNotFoundError: If image_path does not exist.
-        RuntimeError: If RGB validation fails.
+        {"A1": (R, G, B), "A2": (R, G, B), ...} for requested well_ids.
     """
     def ensure_parent_dir(path: str) -> None:
         parent = os.path.dirname(os.path.abspath(path))
@@ -535,8 +745,8 @@ def run_pipeline(
     base, ext = os.path.splitext(image_path)
     ext = ext or ".jpg"
 
-    # Step 1 & 2: Load → perspective coefficients → warp
     raw_pil = Image.open(image_path).convert("RGB")
+    raw_np = np.array(raw_pil)
     coeffs = find_coeffs(config.dst_corners, config.src_corners)
     warped_pil = raw_pil.transform(config.output_size, Image.PERSPECTIVE, coeffs, Image.BICUBIC)
     warped_np = np.array(warped_pil)
@@ -546,29 +756,70 @@ def run_pipeline(
     ensure_parent_dir(warped_save_path)
     save_pil_image(warped_pil, warped_save_path)
 
-    # Step 3 & 4: Grid dimensions + ROI slice on the warped image
-    plate_np = warped_np
-    patches, roi_boxes = slice_roi_patches(
-        plate_np, config.col_num, config.row_num, config.offset_array
-    )
+    if config.well_center_corners is not None:
+        patches, roi_boxes = slice_inner_well_patches(
+            raw_np,
+            config.well_center_corners,
+            config.col_num,
+            config.row_num,
+            config.inner_roi_size,
+        )
+        debug_np = raw_np
+        coordinate_space = "raw"
+    else:
+        patches, roi_boxes = slice_roi_patches(
+            warped_np, config.col_num, config.row_num, config.offset_array
+        )
+        debug_np = warped_np
+        coordinate_space = "warped"
 
-    # Step 5: ROI debug overlay
+    all_well_ids = [
+        f"{chr(ord('A') + row)}{col + 1}"
+        for row in range(config.row_num)
+        for col in range(config.col_num)
+    ]
+    all_rgb_values = extract_well_rgb(patches, all_well_ids, config.col_num)
+    rgb_values = extract_well_rgb(patches, well_ids, config.col_num)
+
     if roi_debug_save_path is None:
         roi_debug_save_path = f"{base}_roi_debug{ext}"
     ensure_parent_dir(roi_debug_save_path)
-    save_roi_debug_image(
-        plate_np, roi_boxes, roi_debug_save_path, config.col_num, config.row_num
+    if config.well_center_corners is not None:
+        save_inner_roi_debug_image(
+            debug_np,
+            roi_boxes,
+            roi_debug_save_path,
+            config.col_num,
+            config.row_num,
+        )
+    else:
+        save_roi_debug_image(
+            debug_np,
+            roi_boxes,
+            roi_debug_save_path,
+            config.col_num,
+            config.row_num,
+        )
+
+    if roi_montage_save_path is None:
+        roi_montage_save_path = f"{base}_roi_patches.png"
+    save_roi_patch_montage(
+        patches,
+        all_rgb_values,
+        roi_montage_save_path,
+        config.col_num,
+        config.row_num,
     )
 
-    # Step 6: RGB extraction
-    rgb_values = extract_well_rgb(patches, well_ids, config.col_num)
+    if rgb_csv_save_path is None:
+        rgb_csv_save_path = f"{base}_rgb.csv"
+    save_rgb_csv(all_rgb_values, roi_boxes, rgb_csv_save_path, coordinate_space)
 
-    # Step 7: Validate
     passed, failures = validate_results(rgb_values)
     if not passed:
         raise RuntimeError(
             f"RGB validation failed: {failures}. "
-            f"Inspect {roi_debug_save_path} to verify ROI grid alignment."
+            f"Inspect {roi_debug_save_path} and {roi_montage_save_path}."
         )
 
     return rgb_values
