@@ -1,9 +1,57 @@
 ---
 name: colour-mixing-optimization-methods
-description: BO, LLM, and CO-HELIOS optimization approaches for colour mixing Delta E 2000 minimization and viscosity transfer-error minimization.
+description: Evaluator-agent, BO, LLM, and CO-HELIOS approaches for recursive self-improvement colour mixing and viscosity optimization.
 ---
 
 # Optimization Methods
+
+---
+
+## Recursive Self-Improvement Evaluator/Executor Contract
+
+For RSI colour mixing, keep optimization judgment separate from physical execution.
+
+1. Let the executor finish one run, process the image, and build an immutable evaluation request with [`rsi_handoff.py`](../../scripts/RSI%20optimization/rsi_handoff.py).
+2. Give the request and complete history to an evaluator agent. Let it choose a built-in metric or define another metric from the available evidence, require it to justify and document the calculation, and ask it for either one new experiment or a workflow-change proposal.
+3. Require the evaluator to return only the `rsi_colour_mixing_handoff` contract. Reasoning is report-only; numeric fields are the sole protocol inputs.
+4. Give the handoff to a different executor agent. Validate its observation hash, iteration sequence, field set, finite non-negative volumes, and total-volume constraint before protocol generation.
+5. Execute the exact validated parameters once. Return the resulting RGB, Delta E, run ID, and history to the evaluator to begin the next cycle.
+
+The evaluator may consult the methods below, but it remains accountable for the final suggestion and metric choice. The executor must reject invalid suggestions instead of correcting them silently. A new observation invalidates all prior unexecuted handoffs.
+
+Autonomous metric choices:
+
+| Method | Use |
+|---|---|
+| `delta_e_2000` | Prefer perceptual colour similarity in CIE Lab space. |
+| `rgb_rmse` | Prefer direct, equal-weight channel error when diagnosing RGB imbalance. |
+| Evaluator-defined | Use any finite, reproducible metric computed only from the current observation/history. Declare its name, value, minimize/maximize goal, definition, and calculation. |
+
+The evaluator may switch metrics on each iteration. Built-ins are calculated before handoff. An evaluator-defined metric is permitted without approval only when `uses_only_observation_data` is true and its finite value and reproducible calculation are included. A metric requiring new data or processing—and any structural change to image processing, protocol generation, stopping rules, labware, safety gates, or execution sequence—must use `decision: "propose_workflow_change"`. Such a handoff is marked `executable: false`; pause and obtain explicit user approval before modifying or resuming the workflow.
+
+Minimal API:
+
+```python
+request = build_evaluation_request(
+    run_id=run_id,
+    iteration=iteration,
+    volumes=executed_volumes,
+    measured_rgb=measured_rgb,
+    target_rgb=target_rgb,
+    delta_e_2000=delta_e,
+    total_volume_ul=total_volume,
+    history=history,
+)
+
+# A separate evaluator agent fills evaluator_handoff from request.
+validated = validate_evaluator_handoff(
+    evaluator_handoff,
+    expected_observation_sha256=request["observation_sha256"],
+    total_volume_ul=total_volume,
+    expected_next_iteration=iteration + 1,
+    available_metrics=request["observation"]["metrics"],
+)
+```
 
 ---
 

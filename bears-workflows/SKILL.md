@@ -107,7 +107,7 @@ Before running:
 
 Use this resource set when the user explicitly requests the **RSI optimization variant** of the optimization workflows.
 
-The RSI resource set currently mirrors the colour-mixing and viscosity optimization references and helper scripts. Keep RSI work isolated from the standard `Optimization_workflow` resources so that RSI-specific changes can evolve independently.
+The RSI colour-mixing workflow uses recursive self-improvement with two separate roles: an evaluator agent assesses measured RGB and full experiment history, then suggests the next RGBy volumes; an executor agent validates and runs exactly those parameters and returns the next observation. Keep RSI work isolated from the standard `Optimization_workflow` resources.
 
 Before running:
 - Load the applicable RSI reference from [`references/RSI optimization/`](references/RSI%20optimization/):
@@ -116,6 +116,9 @@ Before running:
   - [optimization details](references/RSI%20optimization/optimization.md)
   - [image-processing details](references/RSI%20optimization/image-processing.md)
 - Use the RSI helper scripts in [`scripts/RSI optimization/`](scripts/RSI%20optimization/) rather than modifying the standard optimization helpers.
+- Use [`rsi_handoff.py`](scripts/RSI%20optimization/rsi_handoff.py) to bind every evaluator suggestion to the latest observation and validate it before the executor generates a protocol.
+- Assign evaluator and executor work to different agents for every iteration. Never let the evaluator operate hardware or let the executor select or change experimental parameters.
+- Allow the evaluator to choose a built-in metric or define any finite, reproducible metric from the existing observation/history. Require a non-executable proposal and explicit user approval when a metric needs new data/processing or for any other workflow change; never allow a proposal to reach protocol execution directly.
 - Apply the same inputs, safety gates, validation rules, and pre-run vision validation required by the corresponding standard workflow unless an RSI reference explicitly overrides them.
 - Because the folder name contains a space, invoke scripts by file path; do not treat `RSI optimization` as a Python package name.
 

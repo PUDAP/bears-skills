@@ -1,11 +1,11 @@
 ---
 name: colour-mixing-opt
-description: Iteratively mix RGB colours on an Opentrons OT-2 and minimize Delta E 2000 error between the mixed colour and a target colour using real-time camera feedback and BO or LLM optimization.
+description: Run recursive self-improvement colour mixing with separate evaluator and executor agents, using measured RGB feedback to suggest and safely execute the next RGBy parameters.
 ---
 
-# Colour Mixing Optimization
+# Recursive Self-Improvement Colour Mixing Optimization
 
-description: Iteratively mix RGB colours on an Opentrons OT-2 and minimize Delta E 2000 error between the mixed colour and a target colour using real-time camera feedback and BO or LLM optimization.
+Use a strict evaluator-agent to executor-agent loop. After each successful run, the executor returns measured RGB and experiment evidence to the evaluator. The evaluator assesses the result and proposes the next red, green, blue, and water volumes. A separate executor validates and runs that proposal.
 
 ## Required Skills
 
@@ -20,12 +20,15 @@ Invoke these skills before generating any commands:
 - **Opentrons OT-2** with camera attached (`machine_id: "opentrons"`)
 
 ## Core Principle 
-The system must operate in a strict single-run, sequential execution loop.
+The system must operate in a strict single-run, sequential two-agent loop.
 At any time:
 - Only **One active run** is allowed 
 - Each iteration sues a **NEW run_id**
 -No downstream step executres unless the run is **confirmed successful**
 - Every mix must contain four explicitly specified components: **red, green, blue, and water**. Never generate a colour-mixing protocol from only R, G, and B volumes.
+- The **evaluator agent** may evaluate measured RGB/history and suggest parameters, but must not generate, upload, or execute a protocol.
+- The **executor agent** may validate and execute the evaluator's exact numeric suggestion, but must not silently alter or replace it.
+- Never allow one agent to perform both roles within an iteration.
 
 
 ## Optimization Approaches
@@ -37,6 +40,7 @@ Ask the user which approach to use if not specified:
 | **Bayesian Optimization (BO)** | Efficient for continuous four-component `(R, G, B, water)` volume ratios; fewer iterations to converge |
 | **LLM** | Flexible reasoning; good when constraints or colour theory context matters, but suggestions must still include `(R, G, B, water)` |
 | **CO-HELIOS** | Local HELIOS-style PlannerAgent -> DesignAgent -> SafetyAgent optimization chain with auditable decision nodes for every suggestion |
+| **RSI evaluator agent** | Required for recursive self-improvement; evaluates the complete experiment history and hands one validated next experiment to a separate executor agent |
 
 See [optimization.md](optimization.md) for implementation details.
 For CO-HELIOS details, see [../co_helios/co-helios-colour-mixing.md](../co_helios/co-helios-colour-mixing.md).
@@ -237,20 +241,38 @@ Compute arithmetic-mean RGB from every raw pixel in each inner-well patch. Save 
 - User-selected `x_init 2` well → `(R_mix_2, G_mix_2, B_mix_2)`
 - User-selected `x_init 3` well → `(R_mix_3, G_mix_3, B_mix_3)`
 
-**Step 7 — Delta E 2000 calculation**
-Compute Delta E 2000 for each well that received a mix.
+**Step 7 — Evaluation metric calculation**
+Compute both Delta E 2000 and RGB RMSE for each well that received a mix. RGB RMSE is `sqrt(((R_mix-R_target)^2 + (G_mix-G_target)^2 + (B_mix-B_target)^2) / 3)`.
 Use [../../scripts/optimization_workflow/metric.py](../../scripts/optimization_workflow/metric.py) and `calculate_delta_e_2000((R_mix, G_mix, B_mix), (R_target, G_target, B_target))`.
-For the 3 initial mixes this produces `DeltaE_1`, `DeltaE_2`, `DeltaE_3`.
+Use `calculate_rgb_rmse(...)` from [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Preserve both metrics in every observation so the evaluator can choose either method without rerunning the experiment.
 
 **Step 8 — Optimizer feedback**
-Pass all `(volume_ratios, Delta E 2000)` pairs (one per active well) to the chosen optimizer:
+Build an evaluation request with [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Include the latest run ID, iteration, executed `(R, G, B, water)` volumes, measured RGB, target RGB, both supported metrics, total volume, and complete prior history. Pass that immutable request to a dedicated evaluator agent.
+
+The evaluator must select an `evaluation_method` for each decision and explain why it fits the current evidence. It may use a built-in metric (`delta_e_2000` or `rgb_rmse`) or define another metric from the existing observation/history, and it may switch methods across iterations. It may use BO, LLM reasoning, or CO-HELIOS evidence as decision support, but the evaluator owns the final next-parameter recommendation:
 - **BO**: seed the surrogate model with all 3 initial `(ratio, Delta E 2000)` observations
 - **LLM**: provide the full list of `(ratios, RGB, Delta E 2000)` for all 3 initial mixes and request the next suggestion. Capture the model's reasoning separately from the strict numeric suggestion so it can be recorded in the report.
 - **CO-HELIOS**: provide the full list of `(ratios, RGB, Delta E 2000)` observations through `CoHeliosOptimizer.observe(...)`. Confirm the returned suggestion has `optimizer == "CO_HELIOS"` and `metadata["agent_chain"] == ["PlannerAgent", "DesignAgent", "SafetyAgent"]` before protocol generation.
 
 **Step 9 — New volume ratio suggestion**
-The optimizer returns the next `(R_vol, G_vol, B_vol, water_vol)` to try.
-Validate that all four volumes are numeric, non-negative, and sum to `total_volume` (±1 µL tolerance). Reject and re-query/recompute any optimizer suggestion that omits water or returns only three dye volumes.
+The evaluator returns exactly one `rsi_colour_mixing_handoff` JSON object. It must contain the source observation SHA-256, next sequential iteration number, supported `evaluation_method`, concise evaluation, and a decision.
+
+- For `execute_next_iteration`, include exactly four suggestion fields (`red_ul`, `green_ul`, `blue_ul`, and `water_ul`) and `workflow_change: {"action": "none"}`.
+- For `propose_workflow_change`, include a concrete proposal, rationale, and `requires_user_approval: true`. Do not include executable parameters. This decision pauses the loop.
+
+For an evaluator-defined metric, `evaluation_method` must declare `name`, `source: "evaluator_defined"`, `goal` (`minimize` or `maximize`), finite numeric `value`, plain-language `definition`, reproducible `calculation`, and `uses_only_observation_data: true`. Record this declaration in the report. Do not accept an opaque score without its definition and calculation.
+
+Pass the handoff to a separate executor agent. Before any protocol generation, call `validate_evaluator_handoff(...)` from [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Reject stale observation hashes, skipped/repeated iterations, missing or extra fields, non-finite or negative values, and volume totals outside `total_volume` (±1 µL). The executor must not repair an invalid suggestion; return the validation error to the evaluator for a new handoff.
+
+If validation returns `executable: false`, stop and present the workflow-change proposal to the user. Do not modify code, image processing, protocols, safety gates, labware, or execution behavior until the user explicitly approves it. After approval, update and validate the workflow as a separate change, record the approval, then request a fresh evaluator handoff bound to the latest observation.
+
+After validation, the executor must:
+1. Present the exact suggested volumes and evaluator reasoning for approval when physical execution requires approval.
+2. Generate and inspect a protocol from only the validated numeric suggestion.
+3. Execute one new run, poll it to a terminal state, and continue only when it succeeded.
+4. Capture and process the new image, then return the new measured RGB and run evidence as the next evaluation request.
+
+This executor-to-evaluator return closes one recursive self-improvement cycle. Repeat with a fresh observation hash and run ID; never reuse an earlier handoff.
 
 **Step 10 — Iteration report**
 For each new set of optimization, create a new report file named `colour-mixing-report-<sample name that user input>.md`. Defer to the **puda-report** skill only for the save path / output folder — the filename above and the markdown layout described below in this document are authoritative (puda-report decides **where** the file is written, not **how** it is written). Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
@@ -383,6 +405,10 @@ On stop: generate a final summary report using the markdown structure defined in
 - When using the LLM optimizer, record the LLM reasoning for each suggested `(R, G, B, water)` ratio inside that iteration's report block, while still accepting only the validated numeric suggestion for protocol generation. When using BO, omit the `LLM reasoning` row.
 - When using the CO-HELIOS optimizer, record optimizer, planner, candidate-confidence, safety, and agent-decision metadata in every optimization iteration block. If `suggestion.metadata["agent_chain"]` is absent or does not contain `PlannerAgent`, `DesignAgent`, and `SafetyAgent`, stop and treat the run as not using CO-HELIOS.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
+- In RSI mode, treat evaluator prose as report-only content. Generate protocols only from the four numeric fields in a handoff that passed `validate_evaluator_handoff(...)`.
+- Preserve the complete observation and handoff history. Bind every suggestion to the immediately preceding observation SHA-256 and reject stale or replayed handoffs.
+- Keep evaluator and executor responsibilities separate. The evaluator cannot operate the OT-2; the executor cannot choose or modify the next parameters.
+- Allow the evaluator to use built-in metrics or define a reproducible metric from the immutable observation/history. If a metric needs new images, sensors, preprocessing, calibration, or any unavailable data, treat it as a workflow-change proposal requiring explicit user approval. Apply the same rule to protocol, stop-condition, labware, safety-gate, and execution-sequence changes.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
 - Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`
 - Protocol must always end with no tip attached (Opentrons sequencing rule).
