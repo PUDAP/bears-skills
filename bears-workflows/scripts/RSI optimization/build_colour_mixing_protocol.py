@@ -45,6 +45,9 @@ class ColourMixingDeckConfig:
     b_source_well: str = "A1"
     water_source_well: str = "A1"
     api_level: str = "2.23"
+    tiprack_offset_x: float = 0.0
+    tiprack_offset_y: float = 0.0
+    tiprack_offset_z: float = 0.0
 
 
 def _volume(mix: dict, component: str) -> float:
@@ -97,6 +100,12 @@ def build_colour_mixing_protocol(
         "",
         "def run(protocol: protocol_api.ProtocolContext):",
         f'    tiprack = protocol.load_labware("{deck.tiprack_type}", "{deck.tiprack_slot}")',
+        (
+            "    tiprack.set_offset("
+            f"x={deck.tiprack_offset_x:g}, "
+            f"y={deck.tiprack_offset_y:g}, "
+            f"z={deck.tiprack_offset_z:g})"
+        ),
         f'    red_plate = protocol.load_labware("{deck.labware_type}", "{deck.r_slot}")',
         f'    green_plate = protocol.load_labware("{deck.labware_type}", "{deck.g_slot}")',
         f'    blue_plate = protocol.load_labware("{deck.labware_type}", "{deck.b_slot}")',
