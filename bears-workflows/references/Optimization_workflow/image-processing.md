@@ -10,7 +10,7 @@ description: Deterministic inner-well ROI extraction and RGB measurement for the
 
 ## Design
 
-The BEARS camera is fixed above the OT-2 deck and streams at `1920 × 1080`. The default colour-mixing plate is in slot 5. **Capture a fresh calibration image and recalibrate geometry before every colour-mixing optimization run.** Reuse that calibration only for images within the same optimization run; never carry it into a later run.
+The BEARS camera is fixed above the OT-2 deck and streams at `1920 × 1080`. The default colour-mixing plate is in slot 5. **Recalibrate geometry independently from every image capture.** A calibration is valid only for the exact image bytes from which its coordinates were measured. Never reuse a calibration, configuration, or coordinates for another capture, including another capture in the same optimization run.
 
 The extraction path intentionally uses a small square patch at the centre of each well. The patch must remain inside the visible inner-well opening; it must not include the well wall, rim, or surrounding plate.
 
@@ -51,7 +51,7 @@ H     H1    H2     ...     H12
 | `inner_roi_size` | Side length of each centred square patch in raw pixels. Default: `8`. |
 | `offset_array` | Legacy warped-grid fallback used only when `well_center_corners=None`. |
 
-### BEARS default calibration
+### Forbidden default geometry
 
 ```python
 DEFAULT_CONFIG = ImageConfig(
@@ -67,7 +67,7 @@ DEFAULT_CONFIG = ImageConfig(
 )
 ```
 
-These coordinates are fallback examples from a `1920 × 1080` BEARS deck image with the wellplate in slot 5. They do not satisfy the per-run calibration requirement and must not be passed directly to an optimization measurement.
+These coordinates are retained only as a historical example and as a rejection sentinel. `DEFAULT_CONFIG` must never be used, copied, or treated as a base configuration for an optimization measurement. Fresh coordinates must be measured from every captured image.
 
 ## Well-centre interpolation
 
@@ -124,42 +124,42 @@ Custom paths can be supplied through `warped_save_path`, `roi_debug_save_path`, 
 
 ```python
 from scripts.optimization_workflow.image_processing import (
-    create_run_calibration,
+    create_capture_calibration,
     run_pipeline,
 )
 
-run_config = create_run_calibration(
-    run_id="colour-run-001",
-    calibration_image_path="colour-run-001-calibration.jpg",
+capture_config = create_capture_calibration(
+    capture_id="colour-run-001-capture-001",
+    calibration_image_path="colour-RGB-sample-1.jpg",
     raw_image_size=(1920, 1080),
-    src_corners=[(678, 436), (949, 436), (949, 618), (678, 618)],
-    well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
+    src_corners=[<fresh TL>, <fresh TR>, <fresh BR>, <fresh BL>],
+    well_center_corners=[<fresh A1>, <fresh A12>, <fresh H12>, <fresh H1>],
 )
 
 rgb_values = run_pipeline(
     image_path="colour-RGB-sample-1.jpg",
     well_ids=["A1", "A2", "A3"],
-    config=run_config,
-    calibration_run_id="colour-run-001",
+    config=capture_config,
+    calibration_capture_id="colour-run-001-capture-001",
 )
 ```
 
 The returned dictionary contains only requested wells, while the montage and CSV contain all 96 wells.
 
-## Mandatory per-run recalibration procedure
+## Mandatory per-capture recalibration procedure
 
-1. Capture a fresh full-resolution image with the pipette arm clear.
+1. Capture a fresh full-resolution image with the pipette arm clear and assign a unique capture ID.
 2. Confirm the slot-5 plate and all 96 wells are visible.
 3. Establish orientation with A1 at top-left.
 4. Record the centre pixels of A1, A12, H12, and H1.
 5. Set `well_center_corners` in that exact order.
 6. Choose an `inner_roi_size` that remains fully inside the smallest visible well opening; use `8` for the current BEARS setup.
 7. Record the visible outer plate bounds as `src_corners` for the warped overview.
-8. Run `run_pipeline()` and inspect both `_roi_debug` and `_roi_patches`.
-9. Reject the calibration if any sampling box touches a rim, lies between wells, or maps A1 anywhere except top-left.
-10. Create the configuration with `create_run_calibration(...)`, using the current optimization run ID and calibration-image path.
-11. Pass the same run ID as `calibration_run_id` to every `run_pipeline(...)` call in that optimization run.
-12. At the start of the next optimization run, discard this run configuration and repeat the procedure from a new image.
+8. Create the configuration with `create_capture_calibration(...)`, using the unique capture ID and the exact captured image path. The helper binds the configuration to the image path and SHA-256 hash.
+9. Run `run_pipeline()` on that same image with the same ID as `calibration_capture_id`, then inspect both `_roi_debug` and `_roi_patches`.
+10. Reject the capture if any sampling box touches a rim, lies between wells, or maps A1 anywhere except top-left.
+11. Discard the configuration immediately after processing that capture.
+12. Repeat the complete procedure from the next captured image, even within the same optimization run and even when framing appears unchanged.
 
 Completion criterion: all 96 boxes are centred inside their wells, each patch is the configured size, and the CSV contains exactly A1 through H12.
 
@@ -182,13 +182,14 @@ The image-processing tests additionally verify:
 ## Rules
 
 - A request to **conduct image processing and ROI extraction** always starts with a new full-resolution camera capture followed by recalibration from that new image. Do not substitute the latest saved image or previously documented coordinates unless the user explicitly requests offline reprocessing.
-- Every optimization workflow must capture a new calibration image and recalibrate before its first image measurement, including standard workflows.
+- Every target, `x_init`, and optimization-iteration image must be recalibrated independently from that exact capture.
 - Use a fresh image for each optimization measurement.
 - Keep A1 at top-left; never silently rotate or mirror the mapping.
 - Sample the raw image, not an enhanced or contrast-adjusted copy.
 - Keep every ROI completely inside the well opening.
 - Calculate RGB from the same pixels saved as the ROI patch.
 - Inspect `_roi_debug.jpg` and `_roi_patches.png` before trusting changed calibration.
-- Recalibrate before every colour-mixing optimization run, even when framing appears unchanged.
-- Never use `DEFAULT_CONFIG` directly for optimization measurements; it is a coordinate example/base configuration only.
-- Reject image processing when `calibration_run_id` is missing, stale, or does not match the current optimization run.
+- Recalibrate before every capture, even within the same run and even when framing appears unchanged.
+- Never use `DEFAULT_CONFIG`, copy its geometry, or reuse any earlier capture's `ImageConfig` or coordinates.
+- Reject image processing when `calibration_capture_id` is missing, does not match the configuration, or the image path/hash differs from the calibrated capture.
+- Reject the obsolete `calibration_run_id` interface; run-scoped calibration reuse is prohibited.

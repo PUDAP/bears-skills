@@ -44,7 +44,7 @@ Use for **iterative RGB colour mixing to match a target colour via Delta E 2000 
 Capabilities:
 - Automated liquid handling on Opentrons OT-2 to mix R, G, B dye and water volumes
 - Camera capture of mixed colour after each dispensing step
-- Deterministic full-resolution image processing with calibrated inner-well ROI patches and per-well mean RGB measurement
+- Deterministic full-resolution image processing with fresh capture-scoped calibration, inner-well ROI patches, and per-well mean RGB measurement
 - Delta E 2000 calculation between mixed and target colour
 - Bayesian Optimization (BO), LLM-driven, or CO-HELIOS suggestion of next four-component `(R, G, B, water)` volume ratios
 - Iterative protocol generation and execution until maximum iterations is reached
@@ -221,7 +221,7 @@ When answering experiment-selection questions:
 10. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 11. Opentrons protocols must always end with no tip attached to any pipette.
 12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.
-12a. For RSI colour mixing, recalibrate every target, `x_init`, and iteration capture independently: measure geometry from the exact current image, create a capture-scoped configuration with `create_capture_calibration(...)`, and pass its unique capture ID to `run_pipeline(...)`. Never use `DEFAULT_CONFIG` or reuse calibration across captures. Standard non-RSI workflows retain their own documented calibration contract.
+12a. For every standard and RSI colour-mixing workflow, recalibrate every target, `x_init`, and iteration capture independently: measure geometry from the exact current image, create a capture-scoped configuration with `create_capture_calibration(...)`, and pass its unique capture ID to `run_pipeline(...)`. Never use `DEFAULT_CONFIG`, copy its geometry, or reuse calibration, configuration, or coordinates across captures, including captures in the same optimization run.
 12b. Treat any request to **conduct image processing and ROI extraction** as a new measurement run: first capture a new full-resolution camera image, then recalibrate `src_corners` and `well_center_corners` from that new image before calling `run_pipeline(...)`. Do not process the latest saved image or reuse documented/default coordinates unless the user explicitly requests offline reprocessing without fresh capture.
 13. **Ask user if unsure — do not assume**.
 14. **Elephant pickup:** CAM2 align at `z_touch + 15 mm` before `z_touch` or `close_gripper`; `move` speed ≤ 100; rotations in [-180, 180]. See [elephant-pickup-object](references/elephant/elephant-pickup-object.md).

@@ -11,37 +11,33 @@ sys.path.insert(0, str(ROOT))
 from scripts.optimization_workflow.image_processing import (
     DEFAULT_CONFIG,
     ImageConfig,
-    create_run_calibration,
+    create_capture_calibration,
     interpolate_well_centers,
     mean_rgb,
     run_pipeline,
     save_inner_roi_debug_image,
     save_roi_debug_image,
     slice_inner_well_patches,
-    validate_run_calibration,
+    validate_capture_calibration,
 )
 
 
-def test_run_calibration_is_stamped_and_rejects_reuse():
-    config = create_run_calibration(
-        run_id="run-001",
-        calibration_image_path="run-001-calibration.jpg",
-        raw_image_size=(1920, 1080),
-        src_corners=[(678, 436), (949, 436), (949, 618), (678, 618)],
-        well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
+def test_capture_calibration_is_stamped_and_bound_to_image(tmp_path):
+    image_path = tmp_path / "capture-001.png"
+    Image.fromarray(np.zeros((100, 140, 3), dtype=np.uint8)).save(image_path)
+    config = create_capture_calibration(
+        capture_id="capture-001",
+        calibration_image_path=str(image_path),
+        raw_image_size=(140, 100),
+        src_corners=[(5, 5), (135, 5), (135, 95), (5, 95)],
+        well_center_corners=[(15, 15), (125, 15), (125, 85), (15, 85)],
     )
 
-    validate_run_calibration(config, "run-001")
-    assert config.calibration_run_id == "run-001"
-    assert config.calibration_image_path == "run-001-calibration.jpg"
+    validate_capture_calibration(config, "capture-001", str(image_path))
+    assert config.calibration_capture_id == "capture-001"
+    assert config.calibration_image_path == str(image_path.resolve())
+    assert config.calibration_image_sha256
     assert config.calibrated_at_utc
-
-    try:
-        validate_run_calibration(config, "run-002")
-    except ValueError as exc:
-        assert "another optimization run" in str(exc)
-    else:
-        raise AssertionError("Calibration reuse across runs was accepted")
 
 
 def test_default_config_matches_verified_bears_hd_calibration():
@@ -158,19 +154,19 @@ def test_run_pipeline_writes_inner_roi_artifacts(tmp_path):
 
     image_path = tmp_path / "plate.png"
     Image.fromarray(raw).save(image_path)
-    config = ImageConfig(
+    config = create_capture_calibration(
+        capture_id="plate-capture",
+        calibration_image_path=str(image_path),
+        raw_image_size=(140, 100),
         src_corners=[(5, 5), (135, 5), (135, 95), (5, 95)],
-        dst_corners=[(0, 0), (130, 0), (130, 90), (0, 90)],
-        plate_width=130,
-        plate_height=90,
-        col_num=12,
-        row_num=8,
-        offset_array=[[1, 1], [1, 1]],
         well_center_corners=corners,
         inner_roi_size=8,
     )
 
-    result = run_pipeline(str(image_path), ["A1", "H12"], config=config)
+    result = run_pipeline(
+        str(image_path), ["A1", "H12"], config=config,
+        calibration_capture_id="plate-capture",
+    )
 
     assert result == {"A1": (30, 20, 10), "H12": (125, 115, 105)}
     assert (tmp_path / "plate_warped.png").exists()
@@ -201,18 +197,24 @@ def test_legacy_warped_grid_fallback_still_writes_artifacts(tmp_path):
     raw[10:, 10:] = (180, 190, 200)
     image_path = tmp_path / "legacy.png"
     Image.fromarray(raw).save(image_path)
-    config = ImageConfig(
+    config = create_capture_calibration(
+        capture_id="legacy-capture",
+        calibration_image_path=str(image_path),
+        raw_image_size=(20, 20),
         src_corners=[(0, 0), (19, 0), (19, 19), (0, 19)],
-        dst_corners=[(0, 0), (20, 0), (20, 20), (0, 20)],
-        plate_width=20,
-        plate_height=20,
-        col_num=2,
-        row_num=2,
-        offset_array=[[2, 2], [2, 2]],
         well_center_corners=None,
     )
+    config.dst_corners = [(0, 0), (20, 0), (20, 20), (0, 20)]
+    config.plate_width = 20
+    config.plate_height = 20
+    config.col_num = 2
+    config.row_num = 2
+    config.offset_array = [[2, 2], [2, 2]]
 
-    result = run_pipeline(str(image_path), ["A1", "B2"], config=config)
+    result = run_pipeline(
+        str(image_path), ["A1", "B2"], config=config,
+        calibration_capture_id="legacy-capture",
+    )
 
     assert set(result) == {"A1", "B2"}
     assert (tmp_path / "legacy_warped.png").exists()
