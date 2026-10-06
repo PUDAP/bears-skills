@@ -11,13 +11,37 @@ sys.path.insert(0, str(ROOT))
 from scripts.optimization_workflow.image_processing import (
     DEFAULT_CONFIG,
     ImageConfig,
+    create_run_calibration,
     interpolate_well_centers,
     mean_rgb,
     run_pipeline,
     save_inner_roi_debug_image,
     save_roi_debug_image,
     slice_inner_well_patches,
+    validate_run_calibration,
 )
+
+
+def test_run_calibration_is_stamped_and_rejects_reuse():
+    config = create_run_calibration(
+        run_id="run-001",
+        calibration_image_path="run-001-calibration.jpg",
+        raw_image_size=(1920, 1080),
+        src_corners=[(678, 436), (949, 436), (949, 618), (678, 618)],
+        well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
+    )
+
+    validate_run_calibration(config, "run-001")
+    assert config.calibration_run_id == "run-001"
+    assert config.calibration_image_path == "run-001-calibration.jpg"
+    assert config.calibrated_at_utc
+
+    try:
+        validate_run_calibration(config, "run-002")
+    except ValueError as exc:
+        assert "another optimization run" in str(exc)
+    else:
+        raise AssertionError("Calibration reuse across runs was accepted")
 
 
 def test_default_config_matches_verified_bears_hd_calibration():

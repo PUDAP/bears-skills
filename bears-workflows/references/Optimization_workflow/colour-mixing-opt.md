@@ -208,21 +208,21 @@ Run numbering for image filenames:
 If `measured_target_mix` is used, also capture ONE image after the target-mix calibration protocol. This target image is used only to derive `(R_target, G_target, B_target)` and is not counted as `x_init` or as an optimization iteration.
 
 **Step 3a — Image processing (`x_init` and every optimization iteration)**
-The image processing pipeline uses fixed BEARS calibration — no VLM is needed. Call `run_pipeline()` on the fresh full-resolution capture. The steps run in this exact order:
+Before every colour-mixing optimization run, capture a fresh full-resolution calibration image with the arm clear and create a run-scoped configuration with `create_run_calibration(...)`. Do this even when the camera and plate appear unchanged. Do not start the target mix, `x_init`, or an optimization iteration until the calibration artifacts have been inspected and accepted. The steps run in this exact order:
 1. Save a perspective-corrected plate overview using calibrated `src_corners` and `dst_corners`
 2. Use calibrated raw-image centres `[A1, A12, H12, H1]` to bilinearly interpolate all 96 well centres
 3. Extract one centred `8 × 8` raw-pixel patch fully inside each well opening
 4. Compute arithmetic-mean RGB from the exact pixels in each patch
 5. Save the raw-image ROI alignment, all-well patch/RGB montage, and RGB/coordinate CSV
 
-All parameters are stored in `DEFAULT_CONFIG` in `image_processing.py`. Recalibrate if the camera framing, stream resolution, or plate position changes. See [image-processing.md](image-processing.md) for the full field reference.
+Use `DEFAULT_CONFIG` only as a base/example. Stamp the fresh geometry with the current optimization run ID and calibration-image path. Reuse that run-scoped configuration only within the same optimization run. See [image-processing.md](image-processing.md) for the mandatory procedure.
 
 ---
 
 ### Phase 2 — Per-Iteration Loop
 
 **Step 4 — Image processing**
-Call `run_pipeline(image_path, well_ids, config=DEFAULT_CONFIG)` on the fresh captured image. The BEARS default uses calibrated raw-image corner-well centres and inner-well patches; the warped image is retained as an inspection artifact rather than the RGB sampling source.
+Call `run_pipeline(image_path, well_ids, config=run_config, calibration_run_id=current_run_id)` on each fresh captured image. The function must reject calibration created for a different run. The raw-image corner-well centres and inner-well patches are the RGB source; the warped image is retained as an inspection artifact.
 
 For the `x_init` image, `well_ids` must be the 3 user-selected `x_init` destination wells in the same order as the confirmed `x_init` mapping.
 
@@ -371,6 +371,7 @@ On stop: generate a final summary report using the markdown structure defined in
 - Stop optimization only when the configured maximum optimization iterations have been reached. The 3 `x_init` mixes are seed observations and do not count toward the iteration limit.
 - If target colour source is `manual_rgb`, validate and use the user-provided target RGB.
 - If target colour source is `measured_target_mix`, run the target-mix calibration, process the target well image, and use the measured RGB as the target before generating `x_init`.
+- Before every new colour-mixing optimization run, capture and approve a new geometry-calibration image and create a run-scoped `ImageConfig`; never carry calibration into another run.
 - Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
 - Always collect **four separate deck slots** for R, G, B, and water source labware before any `load_labware` for those sources; never use one slot for all three dyes or reuse a dye slot for water.
 - Every target mix, `x_init` mix, optimizer suggestion, generated protocol, and report row must include explicit **red, green, blue, and water** volumes.

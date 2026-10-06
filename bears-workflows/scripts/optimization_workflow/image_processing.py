@@ -2,8 +2,8 @@
 Image processing pipeline for colour mixing experiments.
 
 Fixed-geometry approach — no VLM required. The camera is mounted in a fixed
-position above the OT-2 deck. All geometric parameters are calibrated once
-and stored in ImageConfig; every captured image uses the same values.
+position above the OT-2 deck. Create a fresh run calibration before every
+colour-mixing optimization and reuse it only within that one optimization run.
 
 Pipeline (applied to every captured image):
     Step 1 — Compute 8 perspective coefficients from src_corners → plate rectangle.
@@ -25,8 +25,10 @@ Dependencies:
 from __future__ import annotations
 
 import csv
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -75,6 +77,9 @@ class ImageConfig:
     offset_array: list[list[int]]
     well_center_corners: list[tuple[float, float]] | None = None
     inner_roi_size: int = 8
+    calibration_run_id: str | None = None
+    calibration_image_path: str | None = None
+    calibrated_at_utc: str | None = None
 
     @property
     def output_size(self) -> tuple[int, int]:
@@ -96,6 +101,79 @@ DEFAULT_CONFIG = ImageConfig(
     well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
     inner_roi_size=8,
 )
+
+
+def create_run_calibration(
+    *,
+    run_id: str,
+    calibration_image_path: str,
+    raw_image_size: tuple[int, int],
+    src_corners: list[tuple[int, int]],
+    well_center_corners: list[tuple[float, float]],
+    base_config: ImageConfig = DEFAULT_CONFIG,
+    inner_roi_size: int | None = None,
+) -> ImageConfig:
+    """Create and validate geometry that is valid for one optimization run.
+
+    ``src_corners`` must be ``[TL, TR, BR, BL]`` and
+    ``well_center_corners`` must be ``[A1, A12, H12, H1]`` from a fresh image.
+    The returned configuration is stamped with ``run_id`` so callers can reject
+    accidental reuse in another optimization run.
+    """
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("run_id must be a non-empty string.")
+    if not isinstance(calibration_image_path, str) or not calibration_image_path.strip():
+        raise ValueError("calibration_image_path must identify the fresh calibration image.")
+    width, height = raw_image_size
+    if width <= 0 or height <= 0:
+        raise ValueError("raw_image_size must contain positive width and height.")
+    if len(src_corners) != 4:
+        raise ValueError("src_corners must contain [TL, TR, BR, BL].")
+    if len(well_center_corners) != 4:
+        raise ValueError("well_center_corners must contain [A1, A12, H12, H1].")
+
+    all_points = [*src_corners, *well_center_corners]
+    for index, point in enumerate(all_points):
+        if len(point) != 2 or any(not math.isfinite(float(value)) for value in point):
+            raise ValueError(f"Calibration point {index} must contain two finite coordinates.")
+        x, y = float(point[0]), float(point[1])
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError(
+                f"Calibration point {index} ({x}, {y}) is outside {width}x{height}."
+            )
+
+    tl, tr, br, bl = src_corners
+    a1, a12, h12, h1 = well_center_corners
+    if not (tl[0] < tr[0] and bl[0] < br[0] and tl[1] < bl[1] and tr[1] < br[1]):
+        raise ValueError("src_corners orientation must be TL, TR, BR, BL.")
+    if not (a1[0] < a12[0] and h1[0] < h12[0] and a1[1] < h1[1] and a12[1] < h12[1]):
+        raise ValueError("well_center_corners orientation must be A1, A12, H12, H1.")
+
+    roi_size = base_config.inner_roi_size if inner_roi_size is None else inner_roi_size
+    if roi_size <= 0:
+        raise ValueError("inner_roi_size must be positive.")
+    return replace(
+        base_config,
+        src_corners=[(int(x), int(y)) for x, y in src_corners],
+        well_center_corners=[(float(x), float(y)) for x, y in well_center_corners],
+        inner_roi_size=roi_size,
+        calibration_run_id=run_id.strip(),
+        calibration_image_path=calibration_image_path.strip(),
+        calibrated_at_utc=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def validate_run_calibration(config: ImageConfig, expected_run_id: str) -> None:
+    """Reject missing or stale calibration before processing a run image."""
+    if not expected_run_id:
+        raise ValueError("expected_run_id must be non-empty.")
+    if config.calibration_run_id != expected_run_id:
+        raise ValueError(
+            "Image calibration is missing or belongs to another optimization run: "
+            f"expected {expected_run_id!r}, got {config.calibration_run_id!r}."
+        )
+    if not config.calibration_image_path or not config.calibrated_at_utc:
+        raise ValueError("Run calibration provenance is incomplete.")
 
 
 # ---------------------------------------------------------------------------
@@ -713,6 +791,7 @@ def run_pipeline(
     roi_debug_save_path: str | None = None,
     roi_montage_save_path: str | None = None,
     rgb_csv_save_path: str | None = None,
+    calibration_run_id: str | None = None,
 ) -> dict[str, tuple[int, int, int]]:
     """
     Run the full image processing pipeline for one captured image.
@@ -744,6 +823,9 @@ def run_pipeline(
 
     base, ext = os.path.splitext(image_path)
     ext = ext or ".jpg"
+
+    if calibration_run_id is not None:
+        validate_run_calibration(config, calibration_run_id)
 
     raw_pil = Image.open(image_path).convert("RGB")
     raw_np = np.array(raw_pil)

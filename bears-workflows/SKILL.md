@@ -221,5 +221,6 @@ When answering experiment-selection questions:
 10. Invoke **puda-memory** after every protocol creation and run to keep `experiment.md` current.
 11. Opentrons protocols must always end with no tip attached to any pipette.
 12. For colour mixing optimization, every target mix, `x_init` mix, optimizer suggestion, protocol, and report row must include all four components: **red, green, blue, and water**. Validate `R + G + B + water = total_volume` before generating any protocol.
+12a. Before every standard or RSI colour-mixing optimization run, capture a fresh calibration image, inspect the ROI alignment, create a run-scoped image configuration with `create_run_calibration(...)`, and pass the matching run ID to `run_pipeline(...)`. Never reuse image calibration from a previous optimization run.
 13. **Ask user if unsure — do not assume**.
 14. **Elephant pickup:** CAM2 align at `z_touch + 15 mm` before `z_touch` or `close_gripper`; `move` speed ≤ 100; rotations in [-180, 180]. See [elephant-pickup-object](references/elephant/elephant-pickup-object.md).

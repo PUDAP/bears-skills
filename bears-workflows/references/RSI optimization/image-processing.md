@@ -10,7 +10,7 @@ description: Deterministic inner-well ROI extraction and RGB measurement for the
 
 ## Design
 
-The BEARS camera is fixed above the OT-2 deck and streams at `1920 × 1080`. The default colour-mixing plate is in slot 5. Geometry is calibrated once and reused until the camera or plate position changes.
+The BEARS camera is fixed above the OT-2 deck and streams at `1920 × 1080`. The default colour-mixing plate is in slot 5. **Capture a fresh calibration image and recalibrate geometry before every colour-mixing optimization run.** Reuse that calibration only for images within the same optimization run; never carry it into a later run.
 
 The extraction path intentionally uses a small square patch at the centre of each well. The patch must remain inside the visible inner-well opening; it must not include the well wall, rim, or surrounding plate.
 
@@ -67,7 +67,7 @@ DEFAULT_CONFIG = ImageConfig(
 )
 ```
 
-These coordinates were calibrated from a fresh `1920 × 1080` BEARS deck image with the wellplate in slot 5. Recalibrate after camera movement, zoom/focus changes that alter framing, stream-resolution changes, or plate repositioning.
+These coordinates are fallback examples from a `1920 × 1080` BEARS deck image with the wellplate in slot 5. They do not satisfy the per-run calibration requirement and must not be passed directly to an optimization measurement.
 
 ## Well-centre interpolation
 
@@ -123,18 +123,30 @@ Custom paths can be supplied through `warped_save_path`, `roi_debug_save_path`, 
 ## Usage
 
 ```python
-from scripts.optimization_workflow.image_processing import DEFAULT_CONFIG, run_pipeline
+from scripts.optimization_workflow.image_processing import (
+    create_run_calibration,
+    run_pipeline,
+)
+
+run_config = create_run_calibration(
+    run_id="colour-run-001",
+    calibration_image_path="colour-run-001-calibration.jpg",
+    raw_image_size=(1920, 1080),
+    src_corners=[(678, 436), (949, 436), (949, 618), (678, 618)],
+    well_center_corners=[(712, 459), (920, 460), (919, 592), (711, 592)],
+)
 
 rgb_values = run_pipeline(
     image_path="colour-RGB-sample-1.jpg",
     well_ids=["A1", "A2", "A3"],
-    config=DEFAULT_CONFIG,
+    config=run_config,
+    calibration_run_id="colour-run-001",
 )
 ```
 
 The returned dictionary contains only requested wells, while the montage and CSV contain all 96 wells.
 
-## Recalibration procedure
+## Mandatory per-run recalibration procedure
 
 1. Capture a fresh full-resolution image with the pipette arm clear.
 2. Confirm the slot-5 plate and all 96 wells are visible.
@@ -145,6 +157,9 @@ The returned dictionary contains only requested wells, while the montage and CSV
 7. Record the visible outer plate bounds as `src_corners` for the warped overview.
 8. Run `run_pipeline()` and inspect both `_roi_debug` and `_roi_patches`.
 9. Reject the calibration if any sampling box touches a rim, lies between wells, or maps A1 anywhere except top-left.
+10. Create the configuration with `create_run_calibration(...)`, using the current optimization run ID and calibration-image path.
+11. Pass the same run ID as `calibration_run_id` to every `run_pipeline(...)` call in that optimization run.
+12. At the start of the next optimization run, discard this run configuration and repeat the procedure from a new image.
 
 Completion criterion: all 96 boxes are centred inside their wells, each patch is the configured size, and the CSV contains exactly A1 through H12.
 
@@ -172,4 +187,6 @@ The image-processing tests additionally verify:
 - Keep every ROI completely inside the well opening.
 - Calculate RGB from the same pixels saved as the ROI patch.
 - Inspect `_roi_debug.jpg` and `_roi_patches.png` before trusting changed calibration.
-- Recalibrate whenever framing changes.
+- Recalibrate before every colour-mixing optimization run, even when framing appears unchanged.
+- Never use `DEFAULT_CONFIG` directly for optimization measurements; it is a coordinate example/base configuration only.
+- Reject image processing when `calibration_run_id` is missing, stale, or does not match the current optimization run.
