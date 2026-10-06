@@ -181,6 +181,8 @@ The image-processing tests additionally verify:
 
 ## Rules
 
+- A request to **conduct image processing and ROI extraction** always starts with a new full-resolution camera capture followed by recalibration from that new image. Do not substitute the latest saved image or previously documented coordinates unless the user explicitly requests offline reprocessing.
+- Every optimization workflow must capture a new calibration image and recalibrate before its first image measurement, including RSI workflows.
 - Use a fresh image for each optimization measurement.
 - Keep A1 at top-left; never silently rotate or mirror the mapping.
 - Sample the raw image, not an enhanced or contrast-adjusted copy.
