@@ -31,19 +31,9 @@ At any time:
 - Never allow one agent to perform both roles within an iteration.
 
 
-## Optimization Approaches
+## Optimization Approach
 
-Ask the user which approach to use if not specified:
-
-| Approach | When to use |
-|---|---|
-| **Bayesian Optimization (BO)** | Efficient for continuous four-component `(R, G, B, water)` volume ratios; fewer iterations to converge |
-| **LLM** | Flexible reasoning; good when constraints or colour theory context matters, but suggestions must still include `(R, G, B, water)` |
-| **CO-HELIOS** | Local HELIOS-style PlannerAgent -> DesignAgent -> SafetyAgent optimization chain with auditable decision nodes for every suggestion |
-| **RSI evaluator agent** | Required for recursive self-improvement; evaluates the complete experiment history and hands one validated next experiment to a separate executor agent |
-
-See [optimization.md](optimization.md) for implementation details.
-For CO-HELIOS details, see [../co_helios/co-helios-colour-mixing.md](../co_helios/co-helios-colour-mixing.md).
+The RSI evaluator agent is the decision maker. It examines raw measured RGB, target RGB, executed RGBY parameters, and experiment history; chooses and documents its own evaluation method; and hands one next experiment to a separate executor. See [optimization.md](optimization.md) for the contract.
 
 ---
 
@@ -88,7 +78,7 @@ Collect all of the following before starting. Do not proceed until every value i
 | **Water source — deck slot** | Deck slot for the labware holding **water only** |
 | `x_init` — 3 initial mixes | User-provided volume sets (see below) |
 | `x_init` destination wells | Three user-selected destination wells, one for each `x_init` mix |
-| Optimization approach | BO (EI or LCB), LLM (choose model), or CO-HELIOS |
+| Optimization approach | RSI evaluator agent |
 | Maximum iterations | Stop after this many iterations; default and maximum allowed value is 12 |
 
 **Critical — RGB dye labware and water source use separate deck positions**
@@ -118,7 +108,7 @@ For `measured_target_mix`:
 - Generate a standalone protocol that dispenses only this target mix.
 - Execute the protocol, then capture one whole-wellplate image.
 - Run `run_pipeline(image_path, well_ids=[target_well], config=DEFAULT_CONFIG)`.
-- Use the measured arithmetic-mean inner-well RGB from `target_well` as `(R_target, G_target, B_target)` for all later Delta E 2000 calculations.
+- Use the measured arithmetic-mean inner-well RGB from `target_well` as `(R_target, G_target, B_target)` for all later evaluator comparisons.
 - Do not include the target-mix calibration well in `x_init` observations or optimizer history.
 - If protocol execution, image capture, or image processing fails, stop before generating `x_init` and require recovery.
 
@@ -203,8 +193,8 @@ Use the exact sample name provided by the user in the filename. `<N>` is the run
 Run numbering for image filenames:
 - If `manual_rgb` is used: `x_init` image -> `colour-RGB-<Sample name that user input>-1.jpg`
 - If `measured_target_mix` is used: target-mix image -> `colour-RGB-<Sample name that user input>-1.jpg`, then `x_init` image -> `colour-RGB-<Sample name that user input>-2.jpg`
-- First BO/LLM-suggested run -> next available `<N>` after `x_init`
-- Second BO/LLM-suggested run -> next available `<N>` after the first BO/LLM-suggested run
+- First evaluator-suggested run -> next available `<N>` after `x_init`
+- Second evaluator-suggested run -> next available `<N>` after the first evaluator-suggested run
 - Continue increasing by 1 for every later run
 
 > **Important**: Capture ONE image after the `x_init` protocol is dispensed, and then ONE image after each later optimization iteration — not one image per mix.
@@ -241,26 +231,21 @@ Compute arithmetic-mean RGB from every raw pixel in each inner-well patch. Save 
 - User-selected `x_init 2` well → `(R_mix_2, G_mix_2, B_mix_2)`
 - User-selected `x_init 3` well → `(R_mix_3, G_mix_3, B_mix_3)`
 
-**Step 7 — Evaluation metric calculation**
-Compute both Delta E 2000 and RGB RMSE for each well that received a mix. RGB RMSE is `sqrt(((R_mix-R_target)^2 + (G_mix-G_target)^2 + (B_mix-B_target)^2) / 3)`.
-Use [../../scripts/optimization_workflow/metric.py](../../scripts/optimization_workflow/metric.py) and `calculate_delta_e_2000((R_mix, G_mix, B_mix), (R_target, G_target, B_target))`.
-Use `calculate_rgb_rmse(...)` from [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Preserve both metrics in every observation so the evaluator can choose either method without rerunning the experiment.
+**Step 7 — Raw observation packaging**
+Preserve the executed RGBY volumes, measured RGB, target RGB, run ID, iteration number, and complete history. Do not calculate or prescribe a colour-error score before evaluator handoff.
 
 **Step 8 — Optimizer feedback**
-Build an evaluation request with [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Include the latest run ID, iteration, executed `(R, G, B, water)` volumes, measured RGB, target RGB, both supported metrics, total volume, and complete prior history. Pass that immutable request to a dedicated evaluator agent.
+Build an evaluation request with [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Include the latest run ID, iteration, executed `(R, G, B, water)` volumes, measured RGB, target RGB, total volume, and complete prior history. Pass that immutable request to a dedicated evaluator agent.
 
-The evaluator must select an `evaluation_method` for each decision and explain why it fits the current evidence. It may use a built-in metric (`delta_e_2000` or `rgb_rmse`) or define another metric from the existing observation/history, and it may switch methods across iterations. It may use BO, LLM reasoning, or CO-HELIOS evidence as decision support, but the evaluator owns the final next-parameter recommendation:
-- **BO**: seed the surrogate model with all 3 initial `(ratio, Delta E 2000)` observations
-- **LLM**: provide the full list of `(ratios, RGB, Delta E 2000)` for all 3 initial mixes and request the next suggestion. Capture the model's reasoning separately from the strict numeric suggestion so it can be recorded in the report.
-- **CO-HELIOS**: provide the full list of `(ratios, RGB, Delta E 2000)` observations through `CoHeliosOptimizer.observe(...)`. Confirm the returned suggestion has `optimizer == "CO_HELIOS"` and `metadata["agent_chain"] == ["PlannerAgent", "DesignAgent", "SafetyAgent"]` before protocol generation.
+The evaluator decides how to assess each RGB result from the supplied observation and history. It must name, define, calculate, and justify its selected method, then use that assessment to recommend the next RGBY parameters. It may switch methods between iterations when its explanation makes the change auditable. No fixed metric or optimizer selects the next experiment outside the evaluator.
 
 **Step 9 — New volume ratio suggestion**
-The evaluator returns exactly one `rsi_colour_mixing_handoff` JSON object. It must contain the source observation SHA-256, next sequential iteration number, supported `evaluation_method`, concise evaluation, and a decision.
+The evaluator returns exactly one `rsi_colour_mixing_handoff` JSON object. It must contain the source observation SHA-256, next sequential iteration number, evaluator-defined `evaluation_method`, concise evaluation, and a decision.
 
 - For `execute_next_iteration`, include exactly four suggestion fields (`red_ul`, `green_ul`, `blue_ul`, and `water_ul`) and `workflow_change: {"action": "none"}`.
 - For `propose_workflow_change`, include a concrete proposal, rationale, and `requires_user_approval: true`. Do not include executable parameters. This decision pauses the loop.
 
-For an evaluator-defined metric, `evaluation_method` must declare `name`, `source: "evaluator_defined"`, `goal` (`minimize` or `maximize`), finite numeric `value`, plain-language `definition`, reproducible `calculation`, and `uses_only_observation_data: true`. Record this declaration in the report. Do not accept an opaque score without its definition and calculation.
+`evaluation_method` must declare `name`, `source: "evaluator_defined"`, `goal` (`minimize` or `maximize`), finite numeric `value`, plain-language `definition`, reproducible `calculation`, and `uses_only_observation_data: true`. Record this declaration in the report. Do not accept an opaque score without its definition and calculation.
 
 Pass the handoff to a separate executor agent. Before any protocol generation, call `validate_evaluator_handoff(...)` from [rsi_handoff.py](../../scripts/RSI%20optimization/rsi_handoff.py). Reject stale observation hashes, skipped/repeated iterations, missing or extra fields, non-finite or negative values, and volume totals outside `total_volume` (±1 µL). The executor must not repair an invalid suggestion; return the validation error to the evaluator for a new handoff.
 
@@ -275,12 +260,12 @@ After validation, the executor must:
 This executor-to-evaluator return closes one recursive self-improvement cycle. Repeat with a fresh observation hash and run ID; never reuse an earlier handoff.
 
 **Step 10 — Iteration report**
-For each new set of optimization, create a new report file named `colour-mixing-report-<sample name that user input>.md`. Defer to the **puda-report** skill only for the save path / output folder — the filename above and the markdown layout described below in this document are authoritative (puda-report decides **where** the file is written, not **how** it is written). Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by BO or LLM and append one block after every optimization iteration.
+For each new set of optimization, create a new report file named `colour-mixing-report-<sample name that user input>.md`. Defer to the **puda-report** skill only for the save path / output folder — the filename above and the markdown layout described below in this document are authoritative (puda-report decides **where** the file is written, not **how** it is written). Do not count the 3 `x_init` mixes as iterations. After the initial protocol finishes, append three separate seed log blocks titled `x_init 1`, `x_init 2`, and `x_init 3` (one block per initial mix). Then start optimization iteration counting from the first parameter set suggested by the evaluator and append one block after every optimization iteration.
 
 Each `x_init` log block must record:
 - Which seed run it is: `x_init 1`, `x_init 2`, or `x_init 3`
 - The user-selected destination well for that seed run
-- Delta E 2000 for that initial mix only
+- The evaluator's selected method, value, and assessment for that initial mix
 - The volume ratio and measured RGB value for that initial mix only
 
 If `measured_target_mix` was used, the report must also record a target calibration block before the `x_init` blocks:
@@ -316,7 +301,7 @@ Example `x_init` log block:
 
 ### Wells processed in x_init 1
 
-| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Delta E 2000 |
+| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Evaluator assessment |
 |---|---|---|---|
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>, <water_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
@@ -330,29 +315,20 @@ Example `x_init` log block:
 | Image saved | colour-RGB-<Sample name that user input>-<N>.jpg |
 | Target colour RGB | (<R_target>, <G_target>, <B_target>) |
 | Next suggested ratio (R, G, B, water) | (<R_next> µL, <G_next> µL, <B_next> µL, <water_next> µL) |
-| LLM reasoning | <include only when LLM optimizer was used: concise reasoning behind the suggested ratio> |
-| Optimizer | <include when CO-HELIOS was used: `suggestion.optimizer`> |
-| Planner phase | <include when CO-HELIOS was used: `suggestion.metadata["plan"]["phase"]`> |
-| Planner strategy | <include when CO-HELIOS was used: `suggestion.metadata["plan"]["strategy"]`> |
-| Planner resource estimate | <include when CO-HELIOS was used: `suggestion.metadata["plan"]["resource_estimate"]`> |
-| Candidate confidence | <include when CO-HELIOS was used: `suggestion.metadata["candidate_confidence"]`> |
-| Safety score | <include when CO-HELIOS was used: `suggestion.metadata["safety"]["safety_score"]`> |
-| Safety violations | <include when CO-HELIOS was used: `suggestion.metadata["safety"]["violations"]`> |
-| Agent decision trace | <include when CO-HELIOS was used: `planner_decisions`, `design_decisions`, and `safety_decisions`> |
+| Evaluation method | <name, goal, definition, and reproducible calculation> |
+| Evaluation value | <finite value calculated by the evaluator> |
+| Evaluator assessment | <interpretation of the RGB result and history> |
+| Evaluator next-parameter rationale | <why the suggested RGBY volumes should be tested next> |
 | Stop condition reached | Yes / No |
 
 ### Wells processed this iteration
 
-| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Delta E 2000 |
+| Well | Volume ratio (R, G, B, water µL) | Mixed colour RGB | Evaluator assessment |
 |---|---|---|---|
 | <well_id> | (<R_vol>, <G_vol>, <B_vol>, <water_vol>) | (<R_mix>, <G_mix>, <B_mix>) | <value> |
 ```
 
-The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first BO/LLM-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each optimization iteration block should have 1 row in "Wells processed" for the single BO/LLM-suggested mix.
-
-When the LLM optimizer is used, every optimization iteration block must include the `LLM reasoning` row explaining why the suggested `(R, G, B, water)` ratio was chosen. When BO is used, omit the `LLM reasoning` row from the iteration block. Keep LLM reasoning as a concise report note, and keep the validated numeric JSON suggestion separate from that reasoning before protocol generation.
-
-When CO-HELIOS is used, every optimization iteration block must include the CO-HELIOS metadata rows shown above. The helper `scripts.co_helios.reporting.co_helios_report_markdown_rows(suggestion)` returns these rows in the correct markdown table format.
+The 3 initial `x_init` mixes are seed observations, not iterations, so they should not be written as `Iteration <N>` blocks. They must instead be recorded as three separate blocks titled `x_init 1`, `x_init 2`, and `x_init 3`. After those seed entries, the first evaluator-suggested run must be recorded as `Iteration 1`, then `Iteration 2`, `Iteration 3`, and so on. Each iteration block has one row for the single evaluator-suggested mix and records the evaluator's method, value, assessment, and rationale.
 
 **Step 11 — Generate and execute protocol**
 Use **puda-protocol** to generate a new protocol with the suggested volumes and execute it on the Opentrons.
@@ -361,7 +337,7 @@ Use **puda-protocol** to generate a new protocol with the suggested volumes and 
 
 Generate colour-mixing Opentrons Python with the helper [../../scripts/optimization_workflow/build_colour_mixing_protocol.py](../../scripts/optimization_workflow/build_colour_mixing_protocol.py). Do not freehand `upload_and_run` Python for colour-mixing liquid transfers unless the helper is unavailable and the generated code is manually checked against the rules below.
 
-For every target mix, `x_init` mix, and BO/LLM-suggested iteration:
+For every target mix, `x_init` mix, and evaluator-suggested iteration:
 - Treat `(R_vol, G_vol, B_vol, water_vol)` as absolute dispense volumes in uL, not as volumes to repeat.
 - For each non-zero component, generate exactly one explicit fresh-tip aspirate-dispense block from that component source into the destination well unless a single component volume exceeds the selected pipette's maximum capacity. Do not use `transfer()` or `distribute()` for colour-mixing liquid additions, because those helpers can introduce extra aspiration-like motions such as disposal volume, refills, or blow-out return behavior. With a `p300`, a 300 uL component is one aspirate and one dispense operation, not two.
 - The generated Python for each non-zero component must follow this exact liquid-handling pattern with a fresh tip: one `pipette.pick_up_tip(next_tip)`, one `pipette.aspirate(component_volume, component_source)`, one `pipette.dispense(component_volume, dest_well)`, one `pipette.blow_out(dest_well.top())`, and one `pipette.drop_tip()` before moving to the next component. Do not reuse a tip between components. Do not insert a second aspirate, pre-wet aspirate, air-gap aspirate, disposal-volume aspirate, touch-volume aspirate, or any other liquid-moving command before the matching dispense.
@@ -382,7 +358,7 @@ Stop only when the maximum optimization iteration limit is reached.
 |---|---|
 | `iteration >= max_iterations` | Maximum optimization iterations reached (not counting the 3 `x_init` mixes) |
 
-After every optimization iteration, record the latest Delta E 2000 value for reporting and optimizer history, but do not stop early based on Delta E. Continue until `iteration >= max_iterations`, then stop and mark `Stop condition reached` as `Yes` in the final iteration report block.
+After every optimization iteration, record the evaluator's method, value, assessment, and next-parameter rationale. Do not stop early based on an evaluator score. Continue until `iteration >= max_iterations`, then stop and mark `Stop condition reached` as `Yes` in the final iteration report block.
 
 On stop: generate a final summary report using the markdown structure defined in this document, and write it to `colour-mixing-report-<sample name that user input>.md` at the save path resolved by the **puda-report** skill.
 
@@ -396,20 +372,17 @@ On stop: generate a final summary report using the markdown structure defined in
 - Before every new colour-mixing optimization run, capture and approve a new geometry-calibration image and create a run-scoped `ImageConfig`; never carry calibration into another run.
 - Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
 - Always collect **four separate deck slots** for R, G, B, and water source labware before any `load_labware` for those sources; never use one slot for all three dyes or reuse a dye slot for water.
-- Every target mix, `x_init` mix, optimizer suggestion, generated protocol, and report row must include explicit **red, green, blue, and water** volumes.
+- Every target mix, `x_init` mix, evaluator suggestion, generated protocol, and report row must include explicit **red, green, blue, and water** volumes.
 - Validate all `(R_vol, G_vol, B_vol, water_vol)` tuples before protocol generation: each value must be numeric and non-negative, and `R+G+B+water` must equal `total_volume` within ±1 µL.
 - Always ask the user for explicit confirmation after all required inputs are collected and validated, before the first protocol is generated or executed.
 - Never ask the user to paste API keys, tokens, passwords, or other secrets into chat.
 - If `LLM` optimization requires credentials such as `OPENROUTER_API_KEY`, require them to be pre-configured in the local environment outside the chat before running.
 - If the required LLM credential is missing, stop and tell the user to set it locally, but do not ask them to reveal the secret value and do not write the secret into prompts, config files, protocol files, or shell commands.
-- `OPENROUTER_BASE_URL` must also be set in the local `.env` file before running any LLM optimizer. If it is not found, stop and instruct the user to add it and do not proceed until the variable is confirmed set.
-- When using the LLM optimizer, record the LLM reasoning for each suggested `(R, G, B, water)` ratio inside that iteration's report block, while still accepting only the validated numeric suggestion for protocol generation. When using BO, omit the `LLM reasoning` row.
-- When using the CO-HELIOS optimizer, record optimizer, planner, candidate-confidence, safety, and agent-decision metadata in every optimization iteration block. If `suggestion.metadata["agent_chain"]` is absent or does not contain `PlannerAgent`, `DesignAgent`, and `SafetyAgent`, stop and treat the run as not using CO-HELIOS.
 - Never assume volume ratios — they must come from the optimizer at each iteration.
 - In RSI mode, treat evaluator prose as report-only content. Generate protocols only from the four numeric fields in a handoff that passed `validate_evaluator_handoff(...)`.
 - Preserve the complete observation and handoff history. Bind every suggestion to the immediately preceding observation SHA-256 and reject stale or replayed handoffs.
 - Keep evaluator and executor responsibilities separate. The evaluator cannot operate the OT-2; the executor cannot choose or modify the next parameters.
-- Allow the evaluator to use built-in metrics or define a reproducible metric from the immutable observation/history. If a metric needs new images, sensors, preprocessing, calibration, or any unavailable data, treat it as a workflow-change proposal requiring explicit user approval. Apply the same rule to protocol, stop-condition, labware, safety-gate, and execution-sequence changes.
+- Require the evaluator to define a reproducible assessment method from the immutable observation/history for every decision. If that method needs new images, sensors, preprocessing, calibration, or unavailable data, treat it as a workflow-change proposal requiring explicit user approval. Apply the same rule to protocol, stop-condition, labware, safety-gate, and execution-sequence changes.
 - Image names must follow `colour-RGB-<Sample name that user input>-<N>.jpg` exactly, where `<N>` is the run number and increments on every run.
 - Tip pickup order must be strictly `A1, A2, ... A12, B1, B2, ... H12`
 - Protocol must always end with no tip attached (Opentrons sequencing rule).

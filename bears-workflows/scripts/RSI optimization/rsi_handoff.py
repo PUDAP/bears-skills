@@ -16,10 +16,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "2.0"
 COMPONENT_KEYS = ("red_ul", "green_ul", "blue_ul", "water_ul")
 HANDOFF_TYPE = "rsi_colour_mixing_handoff"
-SUPPORTED_EVALUATION_METHODS = ("delta_e_2000", "rgb_rmse")
 
 
 class HandoffValidationError(ValueError):
@@ -49,37 +48,10 @@ def _canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def calculate_rgb_rmse(measured_rgb: Sequence[float], target_rgb: Sequence[float]) -> float:
-    """Return root-mean-square error across the three RGB channels."""
-    measured = _rgb(measured_rgb, "measured_rgb")
-    target = _rgb(target_rgb, "target_rgb")
-    return math.sqrt(sum((actual - expected) ** 2 for actual, expected in zip(measured, target)) / 3.0)
-
-
-def _validate_evaluation_method(
-    method: Any,
-    available_metrics: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Normalize a built-in name or an evaluator-defined metric declaration."""
-    if isinstance(method, str):
-        if method not in SUPPORTED_EVALUATION_METHODS:
-            raise HandoffValidationError(
-                "unknown metric names require an evaluator-defined metric object"
-            )
-        value = None
-        if available_metrics is not None:
-            if method not in available_metrics:
-                raise HandoffValidationError(f"selected metric {method} is unavailable")
-            value = _finite_number(available_metrics[method], f"metrics.{method}")
-        return {
-            "name": method,
-            "source": "built_in",
-            "goal": "minimize",
-            "value": value,
-        }
-
+def _validate_evaluation_method(method: Any) -> dict[str, Any]:
+    """Validate the evaluator's self-declared assessment method."""
     if not isinstance(method, Mapping):
-        raise HandoffValidationError("evaluation_method must be a metric name or object")
+        raise HandoffValidationError("evaluation_method must be an evaluator-defined object")
     required = {"name", "source", "goal", "value", "definition", "calculation", "uses_only_observation_data"}
     if set(method) != required:
         raise HandoffValidationError(
@@ -87,21 +59,21 @@ def _validate_evaluation_method(
         )
     name = method.get("name")
     if not isinstance(name, str) or not name.strip():
-        raise HandoffValidationError("custom metric name must be non-empty")
+        raise HandoffValidationError("evaluation method name must be non-empty")
     if method.get("source") != "evaluator_defined":
-        raise HandoffValidationError("custom metric source must be evaluator_defined")
+        raise HandoffValidationError("evaluation method source must be evaluator_defined")
     if method.get("goal") not in {"minimize", "maximize"}:
-        raise HandoffValidationError("custom metric goal must be minimize or maximize")
+        raise HandoffValidationError("evaluation method goal must be minimize or maximize")
     if method.get("uses_only_observation_data") is not True:
         raise HandoffValidationError(
-            "a metric requiring new data or processing must be proposed as a workflow change"
+            "a method requiring new data or processing must be proposed as a workflow change"
         )
     definition = method.get("definition")
     calculation = method.get("calculation")
     if not isinstance(definition, str) or not definition.strip():
-        raise HandoffValidationError("custom metric definition must be non-empty")
+        raise HandoffValidationError("evaluation method definition must be non-empty")
     if not isinstance(calculation, str) or not calculation.strip():
-        raise HandoffValidationError("custom metric calculation must be non-empty")
+        raise HandoffValidationError("evaluation method calculation must be non-empty")
     return {
         "name": name.strip(),
         "source": "evaluator_defined",
@@ -120,7 +92,6 @@ def build_evaluation_request(
     volumes: Sequence[float],
     measured_rgb: Sequence[float],
     target_rgb: Sequence[float],
-    delta_e_2000: float,
     total_volume_ul: float,
     history: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
@@ -142,21 +113,14 @@ def build_evaluation_request(
 
     measured = _rgb(measured_rgb, "measured_rgb")
     target = _rgb(target_rgb, "target_rgb")
-    delta_e = _finite_number(delta_e_2000, "delta_e_2000")
     observation = {
         "run_id": run_id.strip(),
         "iteration": iteration,
         "volumes_ul": dict(zip(COMPONENT_KEYS, numeric_volumes)),
         "measured_rgb": measured,
         "target_rgb": target,
-        "metrics": {
-            "delta_e_2000": delta_e,
-            "rgb_rmse": calculate_rgb_rmse(measured, target),
-        },
         "total_volume_ul": total,
     }
-    if observation["metrics"]["delta_e_2000"] < 0:
-        raise HandoffValidationError("delta_e_2000 must be non-negative")
 
     request = {
         "schema_version": SCHEMA_VERSION,
@@ -176,7 +140,6 @@ def validate_evaluator_handoff(
     total_volume_ul: float,
     expected_next_iteration: int,
     tolerance_ul: float = 1.0,
-    available_metrics: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate and normalize an evaluator suggestion before execution."""
     if payload.get("schema_version") != SCHEMA_VERSION:
@@ -198,7 +161,7 @@ def validate_evaluator_handoff(
     reasoning = payload.get("evaluation")
     if not isinstance(reasoning, str) or not reasoning.strip():
         raise HandoffValidationError("evaluation must be a non-empty explanation")
-    method = _validate_evaluation_method(payload.get("evaluation_method"), available_metrics)
+    method = _validate_evaluation_method(payload.get("evaluation_method"))
 
     workflow_change = payload.get("workflow_change")
     if not isinstance(workflow_change, Mapping):
@@ -278,7 +241,15 @@ def evaluator_handoff_template(request: Mapping[str, Any]) -> dict[str, Any]:
         "observation_sha256": request.get("observation_sha256"),
         "decision": "execute_next_iteration",
         "next_iteration": int(observation.get("iteration", 0)) + 1,
-        "evaluation_method": "delta_e_2000",
+        "evaluation_method": {
+            "name": "evaluator_selected_method",
+            "source": "evaluator_defined",
+            "goal": "minimize",
+            "value": 0.0,
+            "definition": "Define what this assessment measures for the current evidence.",
+            "calculation": "Explain how the value was derived from the observation and history.",
+            "uses_only_observation_data": True,
+        },
         "evaluation": "Explain the result, trend, and why this experiment is informative.",
         "suggestion": {key: 0.0 for key in COMPONENT_KEYS},
         "workflow_change": {"action": "none"},
@@ -312,7 +283,6 @@ def main() -> int:
             expected_observation_sha256=request["observation_sha256"],
             total_volume_ul=observation["total_volume_ul"],
             expected_next_iteration=observation["iteration"] + 1,
-            available_metrics=observation.get("metrics"),
         )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

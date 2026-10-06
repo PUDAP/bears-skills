@@ -118,7 +118,7 @@ Before running:
 - Use the RSI helper scripts in [`scripts/RSI optimization/`](scripts/RSI%20optimization/) rather than modifying the standard optimization helpers.
 - Use [`rsi_handoff.py`](scripts/RSI%20optimization/rsi_handoff.py) to bind every evaluator suggestion to the latest observation and validate it before the executor generates a protocol.
 - Assign evaluator and executor work to different agents for every iteration. Never let the evaluator operate hardware or let the executor select or change experimental parameters.
-- Allow the evaluator to choose a built-in metric or define any finite, reproducible metric from the existing observation/history. Require a non-executable proposal and explicit user approval when a metric needs new data/processing or for any other workflow change; never allow a proposal to reach protocol execution directly.
+- Give the evaluator raw measured RGB, target RGB, executed RGBY parameters, and history without a precomputed colour-error metric. Require it to define and justify a finite, reproducible evaluation method for every decision. A method needing new data or processing, or any other workflow change, requires a non-executable proposal and explicit user approval; never allow a proposal to reach protocol execution directly.
 - Apply the same inputs, safety gates, validation rules, and pre-run vision validation required by the corresponding standard workflow unless an RSI reference explicitly overrides them.
 - Because the folder name contains a space, invoke scripts by file path; do not treat `RSI optimization` as a Python package name.
 

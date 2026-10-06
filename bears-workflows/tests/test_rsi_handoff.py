@@ -18,7 +18,6 @@ def _request():
         volumes=[80, 70, 60, 90],
         measured_rgb=[170, 80, 55],
         target_rgb=[180, 60, 40],
-        delta_e_2000=8.2,
         total_volume_ul=300,
     )
 
@@ -46,31 +45,7 @@ def test_valid_evaluator_handoff_is_normalized():
     assert result["executable"] is True
 
 
-def test_evaluator_can_select_rgb_rmse():
-    request = _request()
-    handoff = rsi_handoff.evaluator_handoff_template(request)
-    handoff["evaluation_method"] = "rgb_rmse"
-    handoff["evaluation"] = "Use channel-wise error to guide the next experiment."
-    handoff["suggestion"] = {
-        "red_ul": 90,
-        "green_ul": 65,
-        "blue_ul": 55,
-        "water_ul": 90,
-    }
-
-    result = rsi_handoff.validate_evaluator_handoff(
-        handoff,
-        expected_observation_sha256=request["observation_sha256"],
-        total_volume_ul=300,
-        expected_next_iteration=3,
-        available_metrics=request["observation"]["metrics"],
-    )
-
-    assert result["evaluation_method"]["name"] == "rgb_rmse"
-    assert result["evaluation_method"]["value"] == request["observation"]["metrics"]["rgb_rmse"]
-
-
-def test_evaluator_can_define_an_observation_only_metric():
+def test_evaluator_can_define_an_observation_only_method():
     request = _request()
     handoff = rsi_handoff.evaluator_handoff_template(request)
     handoff["evaluation_method"] = {
@@ -95,7 +70,6 @@ def test_evaluator_can_define_an_observation_only_metric():
         expected_observation_sha256=request["observation_sha256"],
         total_volume_ul=300,
         expected_next_iteration=3,
-        available_metrics=request["observation"]["metrics"],
     )
 
     assert result["evaluation_method"]["name"] == "rgb_mae"
@@ -106,7 +80,6 @@ def test_workflow_change_is_a_non_executable_proposal():
     request = _request()
     handoff = rsi_handoff.evaluator_handoff_template(request)
     handoff["decision"] = "propose_workflow_change"
-    handoff["evaluation_method"] = "rgb_rmse"
     handoff["evaluation"] = "Repeated channel imbalance suggests revising image sampling."
     handoff["suggestion"] = None
     handoff["workflow_change"] = {
@@ -121,11 +94,25 @@ def test_workflow_change_is_a_non_executable_proposal():
         expected_observation_sha256=request["observation_sha256"],
         total_volume_ul=300,
         expected_next_iteration=3,
-        available_metrics=request["observation"]["metrics"],
     )
 
     assert result["decision"] == "propose_workflow_change"
     assert result["executable"] is False
+
+
+def test_named_precomputed_metric_is_rejected():
+    request = _request()
+    handoff = rsi_handoff.evaluator_handoff_template(request)
+    handoff["evaluation_method"] = "precomputed_metric"
+    handoff["evaluation"] = "This must not bypass the evaluator declaration."
+
+    with pytest.raises(rsi_handoff.HandoffValidationError, match="evaluator-defined object"):
+        rsi_handoff.validate_evaluator_handoff(
+            handoff,
+            expected_observation_sha256=request["observation_sha256"],
+            total_volume_ul=300,
+            expected_next_iteration=3,
+        )
 
 
 def test_stale_observation_is_rejected():
