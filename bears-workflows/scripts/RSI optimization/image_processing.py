@@ -1,9 +1,9 @@
 """
 Image processing pipeline for colour mixing experiments.
 
-Fixed-geometry approach — no VLM required. The camera is mounted in a fixed
-position above the OT-2 deck. Create a fresh run calibration before every
-colour-mixing optimization and reuse it only within that one optimization run.
+Every captured image must be calibrated independently. Camera mounting and deck
+geometry may be stable, but a previous image's coordinates and DEFAULT_CONFIG
+must never be reused for an optimization measurement.
 
 Pipeline (applied to every captured image):
     Step 1 — Compute 8 perspective coefficients from src_corners → plate rectangle.
@@ -25,9 +25,10 @@ Dependencies:
 from __future__ import annotations
 
 import csv
+import hashlib
 import math
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
@@ -41,9 +42,7 @@ from PIL import Image, ImageDraw, ImageFont
 @dataclass
 class ImageConfig:
     """
-    Fixed geometric parameters for one camera-and-plate setup.
-
-    Calibrate these values once for the physical rig; reuse for every image.
+    Geometric parameters calibrated from one exact captured image.
 
     Perspective correction:
         src_corners:  Four wellplate corners in the RAW image, ordered
@@ -79,6 +78,8 @@ class ImageConfig:
     inner_roi_size: int = 8
     calibration_run_id: str | None = None
     calibration_image_path: str | None = None
+    calibration_image_sha256: str | None = None
+    calibration_scope: str | None = None
     calibrated_at_utc: str | None = None
 
     @property
@@ -103,27 +104,37 @@ DEFAULT_CONFIG = ImageConfig(
 )
 
 
-def create_run_calibration(
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def create_capture_calibration(
     *,
-    run_id: str,
+    capture_id: str,
     calibration_image_path: str,
     raw_image_size: tuple[int, int],
     src_corners: list[tuple[int, int]],
     well_center_corners: list[tuple[float, float]],
-    base_config: ImageConfig = DEFAULT_CONFIG,
     inner_roi_size: int | None = None,
 ) -> ImageConfig:
-    """Create and validate geometry that is valid for one optimization run.
+    """Create geometry valid only for one exact captured image.
 
     ``src_corners`` must be ``[TL, TR, BR, BL]`` and
-    ``well_center_corners`` must be ``[A1, A12, H12, H1]`` from a fresh image.
-    The returned configuration is stamped with ``run_id`` so callers can reject
-    accidental reuse in another optimization run.
+    ``well_center_corners`` must be ``[A1, A12, H12, H1]`` from the current
+    captured image. The image path and SHA-256 are stamped into the config so
+    reuse on another image is rejected, even within the same campaign.
     """
-    if not isinstance(run_id, str) or not run_id.strip():
-        raise ValueError("run_id must be a non-empty string.")
+    if not isinstance(capture_id, str) or not capture_id.strip():
+        raise ValueError("capture_id must be a non-empty string.")
     if not isinstance(calibration_image_path, str) or not calibration_image_path.strip():
         raise ValueError("calibration_image_path must identify the fresh calibration image.")
+    calibration_image_path = os.path.abspath(calibration_image_path)
+    if not os.path.isfile(calibration_image_path):
+        raise ValueError("calibration_image_path must exist and identify the current capture.")
     width, height = raw_image_size
     if width <= 0 or height <= 0:
         raise ValueError("raw_image_size must contain positive width and height.")
@@ -131,6 +142,14 @@ def create_run_calibration(
         raise ValueError("src_corners must contain [TL, TR, BR, BL].")
     if len(well_center_corners) != 4:
         raise ValueError("well_center_corners must contain [A1, A12, H12, H1].")
+    if (
+        list(src_corners) == DEFAULT_CONFIG.src_corners
+        and list(well_center_corners) == DEFAULT_CONFIG.well_center_corners
+    ):
+        raise ValueError(
+            "DEFAULT_CONFIG geometry is a documentation example and cannot be used "
+            "for an optimization measurement; recalibrate from the current capture."
+        )
 
     all_points = [*src_corners, *well_center_corners]
     for index, point in enumerate(all_points):
@@ -149,31 +168,85 @@ def create_run_calibration(
     if not (a1[0] < a12[0] and h1[0] < h12[0] and a1[1] < h1[1] and a12[1] < h12[1]):
         raise ValueError("well_center_corners orientation must be A1, A12, H12, H1.")
 
-    roi_size = base_config.inner_roi_size if inner_roi_size is None else inner_roi_size
+    with Image.open(calibration_image_path) as image:
+        if image.size != (width, height):
+            raise ValueError(
+                f"raw_image_size {(width, height)} does not match current capture {image.size}."
+            )
+
+    roi_size = 8 if inner_roi_size is None else inner_roi_size
     if roi_size <= 0:
         raise ValueError("inner_roi_size must be positive.")
-    return replace(
-        base_config,
+    return ImageConfig(
         src_corners=[(int(x), int(y)) for x, y in src_corners],
+        dst_corners=[(0, 0), (1800, 0), (1800, 1200), (0, 1200)],
+        plate_width=1800,
+        plate_height=1200,
+        col_num=12,
+        row_num=8,
+        offset_array=[[54, 54], [54, 54]],
         well_center_corners=[(float(x), float(y)) for x, y in well_center_corners],
         inner_roi_size=roi_size,
-        calibration_run_id=run_id.strip(),
-        calibration_image_path=calibration_image_path.strip(),
+        calibration_run_id=capture_id.strip(),
+        calibration_image_path=calibration_image_path,
+        calibration_image_sha256=_sha256_file(calibration_image_path),
+        calibration_scope="capture",
         calibrated_at_utc=datetime.now(timezone.utc).isoformat(),
     )
 
 
-def validate_run_calibration(config: ImageConfig, expected_run_id: str) -> None:
-    """Reject missing or stale calibration before processing a run image."""
-    if not expected_run_id:
-        raise ValueError("expected_run_id must be non-empty.")
-    if config.calibration_run_id != expected_run_id:
+def create_run_calibration(**kwargs) -> ImageConfig:
+    """Reject the obsolete run-scoped calibration API."""
+    raise RuntimeError(
+        "Run-scoped calibration reuse is prohibited. Use create_capture_calibration() "
+        "with a unique capture_id and geometry measured from the current image."
+    )
+
+
+def validate_capture_calibration(
+    config: ImageConfig,
+    expected_capture_id: str,
+    image_path: str,
+) -> None:
+    """Reject missing, default, stale, or cross-image calibration."""
+    if not expected_capture_id:
+        raise ValueError("expected_capture_id must be non-empty.")
+    if config is DEFAULT_CONFIG or config.calibration_scope != "capture":
         raise ValueError(
-            "Image calibration is missing or belongs to another optimization run: "
-            f"expected {expected_run_id!r}, got {config.calibration_run_id!r}."
+            "A fresh capture-scoped calibration is required; DEFAULT_CONFIG and "
+            "run-scoped configurations are not valid for optimization measurements."
         )
-    if not config.calibration_image_path or not config.calibrated_at_utc:
-        raise ValueError("Run calibration provenance is incomplete.")
+    if config.calibration_run_id != expected_capture_id:
+        raise ValueError(
+            "Image calibration is missing or belongs to another capture: "
+            f"expected {expected_capture_id!r}, got {config.calibration_run_id!r}."
+        )
+    current_path = os.path.abspath(image_path)
+    if config.calibration_image_path != current_path:
+        raise ValueError(
+            "Calibration image does not match the image being processed; recalibrate "
+            "src_corners and well_center_corners from the current capture."
+        )
+    if (
+        not config.calibration_image_sha256
+        or config.calibration_image_sha256 != _sha256_file(current_path)
+    ):
+        raise ValueError("Current capture hash differs from the calibrated image.")
+    if not config.calibrated_at_utc:
+        raise ValueError("Capture calibration provenance is incomplete.")
+    if (
+        config.src_corners == DEFAULT_CONFIG.src_corners
+        and config.well_center_corners == DEFAULT_CONFIG.well_center_corners
+    ):
+        raise ValueError("DEFAULT_CONFIG geometry cannot be used for optimization measurements.")
+
+
+def validate_run_calibration(config: ImageConfig, expected_run_id: str) -> None:
+    """Reject the obsolete validation path before it can permit reuse."""
+    raise RuntimeError(
+        "Run-scoped calibration reuse is prohibited. Validate the exact image with "
+        "validate_capture_calibration(config, capture_id, image_path)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -786,11 +859,12 @@ def validate_results(
 def run_pipeline(
     image_path: str,
     well_ids: list[str],
-    config: ImageConfig = DEFAULT_CONFIG,
+    config: ImageConfig | None = None,
     warped_save_path: str | None = None,
     roi_debug_save_path: str | None = None,
     roi_montage_save_path: str | None = None,
     rgb_csv_save_path: str | None = None,
+    calibration_capture_id: str | None = None,
     calibration_run_id: str | None = None,
 ) -> dict[str, tuple[int, int, int]]:
     """
@@ -825,7 +899,16 @@ def run_pipeline(
     ext = ext or ".jpg"
 
     if calibration_run_id is not None:
-        validate_run_calibration(config, calibration_run_id)
+        raise ValueError(
+            "calibration_run_id is obsolete because one calibration cannot be reused "
+            "across a run. Supply calibration_capture_id for this exact image."
+        )
+    if config is None or calibration_capture_id is None:
+        raise ValueError(
+            "run_pipeline requires a fresh capture-scoped config and "
+            "calibration_capture_id for every image."
+        )
+    validate_capture_calibration(config, calibration_capture_id, image_path)
 
     raw_pil = Image.open(image_path).convert("RGB")
     raw_np = np.array(raw_pil)

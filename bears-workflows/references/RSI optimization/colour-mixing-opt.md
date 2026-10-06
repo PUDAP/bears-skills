@@ -29,6 +29,7 @@ At any time:
 - The **evaluator agent** may evaluate measured RGB/history and suggest parameters, but must not generate, upload, or execute a protocol.
 - The **executor agent** may validate and execute the evaluator's exact numeric suggestion, but must not silently alter or replace it.
 - Never allow one agent to perform both roles within an iteration.
+- Every target, initialization, and iteration capture requires a new capture-scoped calibration measured from that exact image. Never reuse calibration coordinates between captures and never use `DEFAULT_CONFIG` for RGB measurement.
 
 
 ## Optimization Approach
@@ -107,7 +108,7 @@ For `measured_target_mix`:
 - Record the target mix volume well mapping explicitly, for example `(R_vol, G_vol, B_vol, water_vol) -> target_well`.
 - Generate a standalone protocol that dispenses only this target mix.
 - Execute the protocol, then capture one whole-wellplate image.
-- Run `run_pipeline(image_path, well_ids=[target_well], config=DEFAULT_CONFIG)`.
+- Recalibrate `src_corners` and `well_center_corners` from that target image, create a unique capture-scoped configuration with `create_capture_calibration(...)`, and call `run_pipeline(..., calibration_capture_id=target_capture_id)`.
 - Use the measured arithmetic-mean inner-well RGB from `target_well` as `(R_target, G_target, B_target)` for all later evaluator comparisons.
 - Do not include the target-mix calibration well in `x_init` observations or optimizer history.
 - If protocol execution, image capture, or image processing fails, stop before generating `x_init` and require recovery.
@@ -202,21 +203,21 @@ Run numbering for image filenames:
 If `measured_target_mix` is used, also capture ONE image after the target-mix calibration protocol. This target image is used only to derive `(R_target, G_target, B_target)` and is not counted as `x_init` or as an optimization iteration.
 
 **Step 3a — Image processing (`x_init` and every optimization iteration)**
-Before every colour-mixing optimization run, capture a fresh full-resolution calibration image with the arm clear and create a run-scoped configuration with `create_run_calibration(...)`. Do this even when the camera and plate appear unchanged. Do not start the target mix, `x_init`, or an optimization iteration until the calibration artifacts have been inspected and accepted. The steps run in this exact order:
+For the target, `x_init`, and every optimization iteration, use the newly captured full-resolution measurement image itself as the calibration image. Recalculate geometry from that image and create a unique capture-scoped configuration with `create_capture_calibration(...)`. Do this even when the camera and plate appear unchanged. Do not measure RGB until the current capture's calibration artifacts have been inspected and accepted. The steps run in this exact order:
 1. Save a perspective-corrected plate overview using calibrated `src_corners` and `dst_corners`
 2. Use calibrated raw-image centres `[A1, A12, H12, H1]` to bilinearly interpolate all 96 well centres
 3. Extract one centred `8 × 8` raw-pixel patch fully inside each well opening
 4. Compute arithmetic-mean RGB from the exact pixels in each patch
 5. Save the raw-image ROI alignment, all-well patch/RGB montage, and RGB/coordinate CSV
 
-Use `DEFAULT_CONFIG` only as a base/example. Stamp the fresh geometry with the current optimization run ID and calibration-image path. Reuse that run-scoped configuration only within the same optimization run. See [image-processing.md](image-processing.md) for the mandatory procedure.
+`DEFAULT_CONFIG` is documentation-only and is rejected for RSI measurements. Bind each new configuration to the exact current image path and SHA-256, use it once, then discard it. See [image-processing.md](image-processing.md) for the mandatory procedure.
 
 ---
 
 ### Phase 2 — Per-Iteration Loop
 
 **Step 4 — Image processing**
-Call `run_pipeline(image_path, well_ids, config=run_config, calibration_run_id=current_run_id)` on each fresh captured image. The function must reject calibration created for a different run. The raw-image corner-well centres and inner-well patches are the RGB source; the warped image is retained as an inspection artifact.
+Call `run_pipeline(image_path, well_ids, config=capture_config, calibration_capture_id=current_capture_id)` on each fresh captured image. The function must reject default geometry, run-scoped calibration, a different path, changed image bytes, or a different capture ID. The raw-image corner-well centres and inner-well patches are the RGB source; the warped image is retained as an inspection artifact.
 
 For the `x_init` image, `well_ids` must be the 3 user-selected `x_init` destination wells in the same order as the confirmed `x_init` mapping.
 
@@ -369,7 +370,7 @@ On stop: generate a final summary report using the markdown structure defined in
 - Stop optimization only when the configured maximum optimization iterations have been reached. The 3 `x_init` mixes are seed observations and do not count toward the iteration limit.
 - If target colour source is `manual_rgb`, validate and use the user-provided target RGB.
 - If target colour source is `measured_target_mix`, run the target-mix calibration, process the target well image, and use the measured RGB as the target before generating `x_init`.
-- Before every new colour-mixing optimization run, capture and approve a new geometry-calibration image and create a run-scoped `ImageConfig`; never carry calibration into another run.
+- Recalibrate every target, `x_init`, and iteration image independently. Create a unique capture-scoped `ImageConfig` from that exact image and never carry calibration into another capture.
 - Always ask the user to choose exactly 3 unique `x_init` destination wells; never assume `A1`, `A2`, and `A3`.
 - Always collect **four separate deck slots** for R, G, B, and water source labware before any `load_labware` for those sources; never use one slot for all three dyes or reuse a dye slot for water.
 - Every target mix, `x_init` mix, evaluator suggestion, generated protocol, and report row must include explicit **red, green, blue, and water** volumes.
