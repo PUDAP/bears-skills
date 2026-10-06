@@ -25,6 +25,10 @@ VOLUME_KEYS: dict[str, tuple[str, ...]] = {
     "water": ("water", "water_vol", "Water"),
 }
 
+TIP_ORDER: tuple[str, ...] = tuple(
+    f"{row}{column}" for row in "ABCDEFGH" for column in range(1, 13)
+)
+
 
 @dataclass
 class ColourMixingDeckConfig:
@@ -88,6 +92,19 @@ def build_colour_mixing_protocol(
     if not mixes:
         raise ValueError("At least one mix is required.")
 
+    explicit_tips: tuple[str, ...] = ()
+    if starting_tip is not None:
+        if starting_tip not in TIP_ORDER:
+            raise ValueError(f"Invalid starting tip: {starting_tip}")
+        required_tips = count_required_tips(mixes)
+        start_index = TIP_ORDER.index(starting_tip)
+        explicit_tips = TIP_ORDER[start_index : start_index + required_tips]
+        if len(explicit_tips) != required_tips:
+            raise ValueError(
+                f"Not enough tips from {starting_tip}: need {required_tips}, "
+                f"have {len(explicit_tips)}"
+            )
+
     lines: list[str] = [
         "from opentrons import protocol_api",
         "",
@@ -118,9 +135,6 @@ def build_colour_mixing_protocol(
         "    )",
     ]
 
-    if starting_tip:
-        lines.append(f'    pipette.starting_tip = tiprack["{starting_tip}"]')
-
     lines.append("    protocol.home()")
 
     source_well_by_plate = {
@@ -130,6 +144,7 @@ def build_colour_mixing_protocol(
         "water_plate": deck.water_source_well,
     }
 
+    tip_index = 0
     for mix in mixes:
         dest_well = mix.get("well") or mix.get("dest_well")
         if not dest_well:
@@ -142,9 +157,13 @@ def build_colour_mixing_protocol(
                 continue
 
             src_well = source_well_by_plate[plate_var]
+            pick_up_tip = "    pipette.pick_up_tip()"
+            if explicit_tips:
+                pick_up_tip = f'    pipette.pick_up_tip(tiprack["{explicit_tips[tip_index]}"])'
+                tip_index += 1
             lines.extend(
                 [
-                    "    pipette.pick_up_tip()",
+                    pick_up_tip,
                     f'    pipette.aspirate({volume:.4g}, {plate_var}["{src_well}"].bottom(1))',
                     f'    pipette.dispense({volume:.4g}, dest_plate["{dest_well}"].bottom(2))',
                     f'    pipette.blow_out(dest_plate["{dest_well}"].top())',
