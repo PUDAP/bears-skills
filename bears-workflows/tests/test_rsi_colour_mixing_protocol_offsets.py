@@ -43,7 +43,7 @@ def test_tiprack_offset_is_encoded_in_generated_protocol():
         starting_tip="A1",
     )
 
-    assert "tiprack.set_offset(x=0, y=2, z=0)" in code
+    assert "tiprack.set_offset(x=0.0, y=2.0, z=0.0)" in code
     assert 'pipette.pick_up_tip(tiprack["A1"])' in code
     assert 'pipette.pick_up_tip(tiprack["A2"])' in code
     assert 'pipette.pick_up_tip(tiprack["A3"])' in code

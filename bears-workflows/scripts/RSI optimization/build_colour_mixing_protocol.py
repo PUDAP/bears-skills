@@ -119,9 +119,9 @@ def build_colour_mixing_protocol(
         f'    tiprack = protocol.load_labware("{deck.tiprack_type}", "{deck.tiprack_slot}")',
         (
             "    tiprack.set_offset("
-            f"x={deck.tiprack_offset_x:g}, "
-            f"y={deck.tiprack_offset_y:g}, "
-            f"z={deck.tiprack_offset_z:g})"
+            f"x={float(deck.tiprack_offset_x)!r}, "
+            f"y={float(deck.tiprack_offset_y)!r}, "
+            f"z={float(deck.tiprack_offset_z)!r})"
         ),
         f'    red_plate = protocol.load_labware("{deck.labware_type}", "{deck.r_slot}")',
         f'    green_plate = protocol.load_labware("{deck.labware_type}", "{deck.g_slot}")',
